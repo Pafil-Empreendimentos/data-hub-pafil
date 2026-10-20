@@ -1,4 +1,4 @@
--- Seeds SILVER: de-paras / tabelas de conformação (DP-* do REGRAS_NEGOCIO.md).
+-- Seeds SILVER: de-paras / tabelas de conformação (DP-* do docs/regras-de-negocio.md).
 -- Estrutura + dados fixos aqui; os populados por planilha/JSON vão via popular_seeds.py.
 -- Idempotente (CREATE IF NOT EXISTS / ON CONFLICT). O `_origem` documenta a fonte.
 
@@ -8,7 +8,7 @@ CREATE SCHEMA IF NOT EXISTS silver;
 -- PK = texto cru da reserva) virou dpara_gerente_contexto (abaixo).
 DROP TABLE IF EXISTS silver.dpara_gerentes;
 -- Migração 21/jul/2026 (passo atrás, mesmo dia): dim_gerente (pessoa via
--- bronze.leads.idgestor) foi DESCARTADA — o dev apontou que "o que vem do CVDW como
+-- bronze.leads.idgestor) foi DESCARTADA — foi apontado que "o que vem do CVDW como
 -- equipes é falho" (idgestor mistura SDR/robô com gerente de venda; ver
 -- [[depara-gerentes-reestruturacao-v2]]). A fonte autoritativa de equipe/gerente/
 -- supervisor por CORRETOR é a planilha manual do backoffice (headcount), abaixo.
@@ -297,7 +297,7 @@ ON CONFLICT (codigo_interno_empreendimento) DO NOTHING;
 
 -- ---------------------------------------------------------------------------------
 -- Task 6.4 (roadmap): tabelas de PREÇO/ESTOQUE, METAS e VIABILIDADE — não vêm da API
--- CVDW (planejamento/input manual da gestão, risco R5 do REGRAS_NEGOCIO.md). Fonte:
+-- CVDW (planejamento/input manual da gestão, risco R5 do docs/regras-de-negocio.md). Fonte:
 -- planilhas SharePoint/OneDrive (BI V.2/BI Matriz), carregadas por popular_seeds.py.
 -- ---------------------------------------------------------------------------------
 
@@ -467,7 +467,7 @@ CREATE TABLE IF NOT EXISTS silver.d_ivv (
 
 -- distratos 2025 — detalhe financeiro de distrato (multa, valor pago, devolução,
 -- parcelas) que NÃO existe na API CVDW. Uma das 3 fontes de distrato do legado
--- (risco R2 do REGRAS_NEGOCIO.md — cvdw.distratos/silver.distratos já é a fonte
+-- (risco R2 do docs/regras-de-negocio.md — cvdw.distratos/silver.distratos já é a fonte
 -- viva de motivo/data/valor; esta tabela soma o detalhe financeiro que falta lá).
 -- Fonte: relatorio_distratos.xlsx (aba "Base Distratos", sheet cru — sem Excel
 -- Table nomeada). "Contrato" NÃO é único no arquivo (894 linhas, 860 distintos,
@@ -507,7 +507,7 @@ CREATE INDEX IF NOT EXISTS ix_distratos_2025_contrato ON silver.distratos_2025 (
 -- só existe no relatório/export manual do CVCRM, hoje CSV no SharePoint (BI V.2/
 -- BI Matriz/perfil_cliente_precadastro.csv e perfil_cliente_reserva.csv, 148
 -- colunas cada). Trazido aqui um subconjunto curado (~28 colunas, não as 148): ver
--- REGRAS_NEGOCIO.md DP-15 para a lista completa do que foi excluído por LGPD
+-- docs/regras-de-negocio.md DP-15 para a lista completa do que foi excluído por LGPD
 -- (banco, PJ, documentos, terceiros PPE) e por que.
 --
 -- PK técnica gerada (_id_tecnico): nem `n` (o "N." do CSV) nem `documento` são
@@ -515,7 +515,7 @@ CREATE INDEX IF NOT EXISTS ix_distratos_2025_contrato ON silver.distratos_2025 (
 -- valores de N. repetidos na carga de 24/ago/2026). `documento` fica só como
 -- chave de JOIN (dígitos do CPF); nunca é exposto
 -- diretamente na gold — mesmo tratamento já dado a documento_cliente em
--- fato_reservas (ver MODELO_SEMANTICO.md).
+-- fato_reservas (ver docs/modelo-semantico.md).
 -- ---------------------------------------------------------------------------------
 
 CREATE TABLE IF NOT EXISTS silver.perfil_cliente_precadastro (

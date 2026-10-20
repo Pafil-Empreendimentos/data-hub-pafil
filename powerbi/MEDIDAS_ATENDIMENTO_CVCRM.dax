@@ -5,7 +5,7 @@
 // NÃO confundir com powerbi/MEDIDAS_ATENDIMENTO.dax (essas são do Blip, chat de
 // WhatsApp). O sufixo _cvcrm em todas as tabelas/medidas deste arquivo é de
 // propósito, pra não colidir com o que já está em produção. Ver DP-17 em
-// REGRAS_NEGOCIO.md.
+// docs/regras-de-negocio.md.
 //
 // Tabela (importada do schema gold): fato_atendimentos_cvcrm, mais as
 // conformadas dim_calendario e dim_empreendimento, que já existem no modelo.
@@ -399,7 +399,7 @@ RETURN
 //
 // Passar o mouse (hover) num cartão expande um bloco de estatísticas (CRIADO
 // HÁ, NA SITUAÇÃO, INTERAÇÕES, ÚLT. ATUALIZAÇÃO), inspirado na tela expandida
-// que você mandou print. Só essas quatro: as três linhas de "VENCIMENTO DE
+// de um print recebido. Só essas quatro: as três linhas de "VENCIMENTO DE
 // SLA" (por assunto/subassunto/workflow) do print NÃO estão no endpoint
 // `atendimentos` do CVDW (os 60 campos não têm prazo/SLA). Atualização de
 // 14/out/2026: o SLA existe em outra rota, relacionamento/atendimentos/listar

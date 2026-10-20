@@ -694,7 +694,7 @@ RETURN
 //
 // O painel web (Relatórios > Registro de chamadas) mostra cartões. Estas medidas dão o número
 // comparável de cada um, e o comparativo completo com as explicações das diferenças está em
-// PAGINA_TELEFONIA.md (seção "Conferência com o painel web") e em `conferir_mdnet.py --gold`.
+// PAGINA_TELEFONIA.md (seção "Conferência com o painel web") e em `ferramentas/conferir_mdnet.py --gold`.
 //   TOTAL ENTRADA          -> [Ligações Entrada]
 //   ATENDIDA               -> [Ligações Entrada Atendidas]
 //   NÃO ATENDIDA           -> [Ligações Entrada Não Atendidas]   (COM o ruído, como o painel)

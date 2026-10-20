@@ -3,7 +3,7 @@
 .env.*
 !.env.example
 
-# === Schema gerado pela descoberta (pode conter exemplos de dados reais) ===
+# === Schema gerado pela descoberta da API (pode conter exemplos de dados reais) ===
 schema/cvdw_schema.json
 schema/cvdw_schema_report.md
 cvdw_schema.json
@@ -22,51 +22,38 @@ env/
 # === Logs ===
 *.log
 
-# === Backups locais de planilha (histórico de edição, sem valor de documentação) ===
+# === Backups locais de planilha (historico de edicao, sem valor de documentacao) ===
 _backups_fechamento/
 
-# === Ferramentas de descoberta de schema (uso único; API já mapeada em ===
-# === sql/bronze/bronze.sql, que é a fonte da verdade versionada) =========
-descoberta_schema.py
-gerar_ddl_bronze.py
-
-# === Material de divulgação (não referenciado por nenhuma doc do projeto) ===
+# === Trabalho do analista que nao faz parte da plataforma ===
+# Scripts e saidas da apresentacao mensal de fechamento (decks, dados do mes)
+apresentacao/
+# Estudos e experimentos
+estudo_pyspark/
+# Entregavel pontual (Perfil de Cliente): so o CSV de constantes e citado na documentacao
+relatorios/*
+!relatorios/viabilidade_constantes_legado.csv
+# Material de divulgacao
 /dashboard_credito_anon.png
 /dashboard_credito_filtros_anon.png
 /dashboard_leads_filtros_anon.png
 /dashboard_leads_prospeccao_anon.png
 /diagrama_pipeline_linkedin.png
 
-# === Entregável pontual (Perfil Cliente Quinta dos Ventos) — fora do pipeline
-# === versionado; só o CSV de constantes é citado na documentação =========
-relatorios/*
-!relatorios/viabilidade_constantes_legado.csv
-
-# === Exports mensais de reconciliação (dado de um mês específico, não doc) ===
+# === Exports de reconciliacao (dado de um periodo especifico, nao e documentacao) ===
 reconciliacao/*.xlsx
-# CDR da telefonia (MDnet) traz telefone de cliente: dado pessoal, não versionar
+# O CDR da telefonia traz telefone de cliente: dado pessoal, nunca versionar
 reconciliacao/*.csv
-# HTML do painel da MDnet baixado pelo explorar_menu_mdnet.py (pode ter dado do usuário logado)
+# HTML do painel da MDnet baixado durante a descoberta (pode ter dado do usuario logado)
 reconciliacao/painel_mdnet/
 
-# === Automação de reporting: sessão autenticada do Power BI, nunca versionar ===
-automacao_reporting/capture_service/storage_state.json
-# Pacote gerado só para levar a stack até a VM — artefato, não fonte.
-automacao_reporting.zip
+# === Pacotes gerados para levar codigo a VM (artefato, nao fonte) ===
+*.zip
 
-# === Claude Code ===
+# === Ferramentas do editor / IA / SO ===
 .claude/
-# .mcp.json aponta pra um caminho local (extensão do VS Code) — não portável
 .mcp.json
-
-# === Editores / SO ===
 .vscode/
 .idea/
 .DS_Store
 Thumbs.db
-
-# === Apresentação mensal: saídas geradas (deck .pptx e dados do fechamento) ===
-apresentacao/*.pptx
-apresentacao/dados_fechamento.json
-apresentacao/*.xlsx
-apresentacao/dados_uberaba.json

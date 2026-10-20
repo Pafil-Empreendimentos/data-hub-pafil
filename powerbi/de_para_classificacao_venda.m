@@ -19,7 +19,7 @@
 // =============================================================================
 
 // ---- Query 1: de_para_classificacao ----------------------------------------
-// Le o de_para_classificacao.xlsx JA LIMPO (gerado por gerar_depara_classificacao.py e
+// Le o de_para_classificacao.xlsx JA LIMPO (gerado por ferramentas/gerar_depara_classificacao.py e
 // versionado em BI V3 CVDW/depara/depara_classificacao/arquivo/). NAO le a Vendas
 // Consolidadas baguncada direto — o script ja consolidou as abas numa unica.
 let

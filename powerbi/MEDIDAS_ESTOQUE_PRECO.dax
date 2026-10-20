@@ -2,7 +2,7 @@
 // Medidas DAX — Estoque / Preço / VSO / Margem  (BI de Preço, tasks 6.4 e 6.5).
 //
 // Reimplementação parametrizada do modelo "Preço" legado (KPI-11..17 do
-// REGRAS_NEGOCIO.md, seção 4.2): no legado eram ~9 medidas REPETIDAS por
+// docs/regras-de-negocio.md, seção 4.2): no legado eram ~9 medidas REPETIDAS por
 // empreendimento (PA_, TR_, PSU_, PCJ_, ARB_, PO_, PR_, F16_, QBV_, VM_, PPN_,
 // VLPQ_ — 12 conjuntos, 21 páginas) com constantes de margem coladas no DAX.
 // Aqui é 1 conjunto só, parametrizado por gold.dim_estrutura (status da unidade)
@@ -21,7 +21,7 @@
 // Estoque e curva de IVV são fotos de hoje: com o relacionamento ativo, um filtro de
 // Ano na página cortava dim_estrutura para só as unidades vendidas naquele ano. O
 // estoque (sem data de venda) sumia, m_ivv_padrao ficava em branco e o
-// % Vendido Acumulado dividia por 5-13 unidades (8800%). Ver MODELO_SEMANTICO.md, seção 3.
+// % Vendido Acumulado dividia por 5-13 unidades (8800%). Ver docs/modelo-semantico.md, seção 3.
 //
 // A relação dim_estrutura -> fato_reservas é o que faz as MATRIZES de posição
 // funcionarem (VGV/M² praticado quebrado por prumada x posição x final). No

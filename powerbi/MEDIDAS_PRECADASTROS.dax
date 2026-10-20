@@ -1,7 +1,7 @@
 // =============================================================================
 // Medidas — página "Pré Cadastro" (funil de crédito), sobre a GOLD
 // (gold.fato_precadastros). Reimplementação da página "Pré Cadastro" do BI
-// Matriz legado (REGRAS_NEGOCIO.md DP-05 / KPI-25..27 / KPI-37), decifrada de
+// Matriz legado (docs/regras-de-negocio.md DP-05 / KPI-25..27 / KPI-37), decifrada de
 // _bi_ref/matriz_model.bim + matriz_report.json (35 visuais na página).
 //
 // ETAPA BI / BI DETALHADA (DP-05): a "Situação" crua do CVCRM não é o funil de
@@ -110,7 +110,7 @@ SUMX ( DISTINCT ( fato_precadastros[id_precadastro] ), CALCULATE ( MAX ( fato_pr
 // =============================================================================
 // HTML Content — mesmo padrão visual das medidas da página Leads (KPIs Leads
 // HTML / Funil Comercial HTML), adaptado para Pré Cadastro. CSS/HTML/proporções
-// preservados de propósito (pedido do dev, 24/jul/2026); só a lógica de dados
+// preservados de propósito (pedido do analista responsável, 24/jul/2026); só a lógica de dados
 // muda. Cole em visuais "HTML Content" (mesma extensão usada no resto do .pbix).
 // =============================================================================
 
@@ -122,7 +122,7 @@ SUMX ( DISTINCT ( fato_precadastros[id_precadastro] ), CALCULATE ( MAX ( fato_pr
 // bruto de leads, pra bater com o mesmo recorte do resto dos cards. "Vendas"
 // trocado (mesmo dia) pra [QTD Vendas (incl. distratadas)] de MEDIDAS_GOLD.dax
 // — KPI-08, fato_reservas[eh_venda_ou_distrato]=TRUE, definição R1 do
-// REGRAS_NEGOCIO.md — em vez de [Qtd Vendida dos pré-cadastros]; por isso a
+// docs/regras-de-negocio.md — em vez de [Qtd Vendida dos pré-cadastros]; por isso a
 // taxa ao lado é recalculada na hora (_vendas / _aprovado) em vez de usar
 // [Taxa de Vendas], que ainda é a razão antiga (ambas medidas continuam
 // existindo, só o card mudou de fonte). Taxas de conversão (Tx

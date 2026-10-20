@@ -2,7 +2,7 @@
 # producao do Pafil DW.
 #
 # Etapa 7.2 do roadmap (versao Windows -- a TI passou credenciais de RDP para
-# uma maquina Windows fisica/local, NAO uma EC2; ver RUNBOOK_WINDOWS.md e a
+# uma maquina Windows fisica/local, NAO uma EC2; ver README.md e a
 # memoria "hospedagem-producao" para o historico da decisao). Idempotente:
 # pode rodar de novo sem quebrar nada.
 #
@@ -34,7 +34,7 @@ function Aviso($msg) { Write-Host "[!] $msg" -ForegroundColor Yellow }
 # --- 0. Localiza o servico, os binarios e o data dir --------------------------
 $servico = Get-Service -Name "postgresql-x64-$PgVersion*" -ErrorAction SilentlyContinue | Select-Object -First 1
 if (-not $servico) {
-    throw "Servico do PostgreSQL $PgVersion nao encontrado (Get-Service postgresql*). Instale primeiro com o instalador oficial -- ver RUNBOOK_WINDOWS.md, passo 2."
+    throw "Servico do PostgreSQL $PgVersion nao encontrado (Get-Service postgresql*). Instale primeiro com o instalador oficial -- ver README.md, passo 2."
 }
 Log "Servico encontrado: $($servico.Name) ($($servico.Status))"
 
@@ -106,7 +106,7 @@ host    all             all             ::1/128                 scram-sha-256
 # reporting ja estiver liberada (a linha do pafil_n8n descomentada), rodar este
 # script de novo derruba o acesso dela e o envio para silenciosamente -- os
 # prints simplesmente param de chegar. Descomente a linha acima ANTES de
-# reexecutar. Ver automacao_reporting/README.md secao 3.
+# reexecutar. Ver docs/guia-completo.md secao 3 do repositório automacao-reporting.
 
 Restart-Service $servico.Name
 Start-Sleep -Seconds 3
@@ -191,6 +191,6 @@ Log "Pronto."
   pg_hba .......... $pgHba (apenas localhost)
   Credenciais ..... $ArqCred
 
-  Proximo passo: RUNBOOK_WINDOWS.md, secao "3. Aplicar o schema e rodar a carga full".
+  Proximo passo: README.md, secao "3. Aplicar o schema e rodar a carga full".
 
 "@

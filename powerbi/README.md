@@ -1,8 +1,8 @@
 # Power BI sobre a camada gold: passo a passo de importação
 
 **Atenção:** o arquivo `de_para_classificacao.xlsx`, guardado nesta mesma pasta,
-contém dado real (nomes e classificações de proposta). O repositório é privado;
-não redistribua esse arquivo fora dele.
+contém dado real (nomes e classificações de proposta). Mantenha o repositório privado e
+não redistribua esse arquivo.
 
 Este é o guia para montar o `.pbix` da apresentação mensal, consumindo o star
 schema da camada gold, substituindo a cadeia manual de CVCRM até Vendas
@@ -14,8 +14,8 @@ diretamente no Power BI.
 
 ## 0. Pré-requisitos
 
-1. **O banco precisa estar de pé:**
-   `& "$env:LOCALAPPDATA\pafil_pg\pg.ps1" start`
+1. **O banco precisa estar de pé.** Num Postgres local, basta o serviço ativo. Para ler a
+   produção, abra o túnel SSH (veja [`infra/README.md`](../infra/README.md)).
 2. **O warehouse precisa estar aplicado:** `python aplicar_tudo.py` (que roda
    silver, gold e seeds em sequência). Para ter os nomes conformados e o House
    completos, rode também `python aplicar_tudo.py --xlsm "<Vendas Consolidadas.xlsm>"`
@@ -33,12 +33,13 @@ abre o Power BI Desktop conectado ao banco.
 
 **Opção B, manual:** vá em Página Inicial → Obter dados → Banco de dados → Banco
 de dados PostgreSQL:
-- **Servidor:** `localhost:5433`
+- **Servidor:** `localhost:<porta>` (a do seu `.env`: `5433` pelo túnel de produção)
 - **Banco de dados:** `pafil_dw`
 - **Modo:** Importar
-- Nas credenciais, na aba Banco de dados: usuário `postgres`, senha
-  `PafilLocalDev2026`.
-- Se o Power BI reclamar de SSL ou criptografia, lembre que o banco local roda
+- Nas credenciais, na aba Banco de dados: o usuário `pafil_bi` (somente leitura) para
+  produção, ou o usuário e a senha do seu banco local. A senha de produção fica na máquina
+  do banco, e não neste repositório.
+- Se o Power BI reclamar de SSL ou criptografia, lembre que a conexão por túnel roda
   sem SSL: desmarque a opção "Criptografar conexão" (ou responda que quer
   conectar sem criptografia quando for perguntado).
 
@@ -95,7 +96,7 @@ dim_corretor[id_corretor]         1─* fato_reservas[id_corretor]
 Cole o conteúdo de `MEDIDAS_GOLD.dax` em uma tabela de medidas. Ele já traz VGV
 Bruto, VGV Distrato, VGV Líquido, QTD, Ticket Médio, Taxa de Distrato, YTD e
 variação mês a mês (MoM), todos mapeados aos KPIs correspondentes em
-`REGRAS_NEGOCIO.md`.
+`docs/regras-de-negocio.md`.
 
 ---
 
@@ -171,7 +172,7 @@ antes de começar a montar os visuais.
 | Cadastro por Produto | Colunas agrupadas | eixo `fato_precadastros[empreendimento_conformado]`, valor `[Qtd Pastas]` |
 | Analítico dos Leads, Pastas e Reservas | Tabela | colunas `data_cad`, `corretor_tratado`, `id_lead`, `situacao`, `etapa_bi_detalhada`, `empreendimento_conformado`, `imobiliaria`, `id_reserva` |
 | Cards do topo | HTML Content | medida `[KPIs Pré-Cadastro HTML]`, com 6 cards (Pastas, Avaliado, Tx Avaliação, Aprovado, Tx Aprovação, Vendas), no mesmo padrão visual do `KPIs Leads HTML` |
-| Funil Pastas → Crédito Analisado → Crédito Aprovado → Venda | HTML Content | medida `[Funil Pré-Cadastro HTML]`, no mesmo padrão visual do `Funil Comercial HTML`, só que com 4 estágios em vez de 3 (não é um visual nativo do legado; foi adaptado a pedido do desenvolvedor) |
+| Funil Pastas → Crédito Analisado → Crédito Aprovado → Venda | HTML Content | medida `[Funil Pré-Cadastro HTML]`, no mesmo padrão visual do `Funil Comercial HTML`, só que com 4 estágios em vez de 3 (não é um visual nativo do legado; foi adaptado) |
 | Slicers | Segmentação | `fato_precadastros[imobiliaria]`, `fato_precadastros[empreendimento_conformado]`, `depara_corretor_headcount[supervisor]` (rotulado como Equipe Corretor), `depara_corretor_headcount[regional]`, e `dim_calendario` (Ano, Mês, Dia, marcando a hierarquia) |
 | Aprovação de Crédito | Rosca | eixo `fato_precadastros[aprovacao_credito]`, valor `[Qtd Pastas]` (ou `COUNTROWS`). Uma cobertura baixa é esperada aqui, cerca de 9%, já que só cobre as pastas efetivamente tocadas pelo time de crédito |
 | Encaminhado ao CCA | Rosca | eixo `fato_precadastros[encaminhado_cca]`, valor `[Qtd Pastas]` (ou `COUNTROWS`). A mesma ressalva de cobertura baixa se aplica aqui |
@@ -214,8 +215,8 @@ Dois pontos que costumam gerar dúvida ao montar:
 ### A página "Atendimento (CVCRM)" (protocolo/ticket de pós-venda)
 
 Sobre `gold.fato_atendimentos_cvcrm`, o endpoint `atendimentos` do CVDW (DP-17
-em `REGRAS_NEGOCIO.md`). **Não confundir com a página "Atendimento" já
-existente, que é o chat de WhatsApp via Blip** — os dois fatos e as duas
+em `docs/regras-de-negocio.md`). **Não confundir com a página "Atendimento" já
+existente, que é o chat de WhatsApp via Blip**, os dois fatos e as duas
 famílias de medidas levam o mesmo nome de assunto de propósito, mas são
 domínios diferentes, sem relação entre si hoje; daí o sufixo `_cvcrm` em tudo
 que é novo aqui. As medidas estão em
@@ -236,21 +237,17 @@ Antes de apresentar, confira os visuais contra os relatórios já reconciliados 
 - Distratos e VGV já estão reconciliados: ao centavo, no caso dos distratos, e em
   98,8% dos casos, no caso do VGV.
 
-> **Atenção:** o bronze local hoje é parcial. Para o relatório de produção de
-> verdade, use o banco de produção, não o local: a máquina Windows física/local
-> descrita em `infra/RUNBOOK_WINDOWS.md` (o plano de instância EC2 foi
-> descartado em 20/ago/2026 — a TI não provisionou, e passou uma máquina Windows
-> já existente no lugar). Troque o servidor da conexão para `localhost:5432`
-> (não `localhost:5433`, que é só do banco de dev) e o usuário para `pafil_bi`
-> (não `postgres`/`PafilLocalDev2026`) — a senha do `pafil_bi` fica em
-> `C:\pafil\pafil_credenciais.txt`, dentro da própria máquina de produção. O
-> modelo e as medidas em si não mudam nesse processo.
+> **Atenção:** um banco local costuma ter só uma carga parcial. Para o relatório de verdade,
+> use o banco de produção, na máquina Windows descrita em [`infra/README.md`](../infra/README.md).
+> Dentro dela, o servidor da conexão é `localhost:5432`; pelo túnel SSH do seu notebook, é
+> `localhost:5433`. O usuário é `pafil_bi`, e a senha dele fica no arquivo de credenciais da
+> própria máquina de produção. O modelo e as medidas não mudam nesse processo.
 
 ## 7. Como atualizar mês a mês
 
 Depois de rodar a carga incremental (`ingestao.py --incremental`) seguida de
 `aplicar_tudo.py`, basta clicar em Atualizar dentro do Power BI Desktop. Em
 produção, isso já roda sozinho: a máquina Windows física/local
-(`infra/RUNBOOK_WINDOWS.md`) tem uma tarefa agendada rodando a ingestão
+(`infra/README.md`) tem uma tarefa agendada rodando a ingestão
 incremental de hora em hora, e o Power BI Service atualiza automaticamente
 através do On-premises Data Gateway instalado na mesma máquina do banco.

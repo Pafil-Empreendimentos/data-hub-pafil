@@ -6,7 +6,7 @@ página "Marketing N1") ao modelo novo ("Esteira de reservas"). Extraído do
 visualContainers) em 19 de agosto de 2026, combinado com o DAX das 26 medidas
 originais, puxado ao vivo via `powerbi-mcp` (não adivinhado a partir do nome).
 
-As medidas novas ficam em `powerbi/PAGINA_MARKETING_N1_HTML.dax` — já criadas
+As medidas novas ficam em `powerbi/PAGINA_MARKETING_N1_HTML.dax`, já criadas
 no modelo vivo via XMLA (medida não mexe na camada de consultas, salva
 normal). Este documento cobre só o que falta: os visuais nativos, que são
 passo manual do Desktop (posicionar/formatar visual não dá pela API/TOM).
@@ -25,7 +25,7 @@ time de marketing: `BI V.2\BI Matriz\Metas Performance Digital.xlsx`, aba
 
 ⚠️ **A tabela entrou no Desktop com um typo no nome**: `dim_metas_performace_digital`
 (sem o "n" de "performance"). Todas as medidas do `.dax` referenciam esse nome
-exatamente como está — se alguém renomear a tabela no Desktop pra corrigir o
+exatamente como está, se alguém renomear a tabela no Desktop pra corrigir o
 typo, as medidas quebram e precisam ser atualizadas junto.
 
 Cobertura: 312 das 480 linhas da planilha casaram com um `codigo_cv` da
@@ -43,14 +43,14 @@ casaram normalmente.
 |---|---|---|
 | Empreendimento | `dim_empreendimento[empreendimento_conformado]` | |
 | Regional | `dim_empreendimento[regional]` | |
-| Assinatura | `dim_empreendimento[assinatura]` | Coluna nova (ago/2026) — só entra depois de fechar/reabrir o Desktop uma vez |
+| Assinatura | `dim_empreendimento[assinatura]` | Coluna nova (ago/2026), só entra depois de fechar/reabrir o Desktop uma vez |
 | Share | `fato_reservas[Share]` | Classificação oficial da venda (Vendas Consolidadas), não o Share do corretor |
 
 ## 3. Slicer de meses
 
 No legado é um slicer horizontal em estilo "blocos" (`orientation: Horizontal`,
 seleção única forçada), ligado a uma tabela oculta de Auto Date/Time. No modelo
-novo, use `dim_calendario[mes_nome]` (já vem ordenado por `mes` — não precisa
+novo, use `dim_calendario[mes_nome]` (já vem ordenado por `mes`, não precisa
 criar tabela de data extra):
 
 1. Segmentação → campo `dim_calendario[mes_nome]`.
@@ -77,16 +77,16 @@ padrão de `[KPIs Leads HTML]`/`[KPIs Preço HTML]`). Ordem e fonte:
 
 ⚠️ **Cuidado de nomenclatura, não confundir:** as medidas `[Qtd Lead Quali]` /
 `[Tx_Qualif_Leads]` já existentes (pasta "Leads") foram redefinidas em
-23/jul/2026 pra lógica por ETAPA da esteira, não são mais MQL — por isso os
+23/jul/2026 pra lógica por ETAPA da esteira, não são mais MQL, por isso os
 cards MQL/% Qualificação desta página usam medidas próprias `(Mkt N1)`, com a
 definição MQL original (`fato_leads["MQL 2"]="SIM"`).
 
 **Popup de hover (CSS-only):** só nos cards **Vendas Marketing** e **VGV**,
-quebrando em House x Parcerias (quantidade + VGV) — é o único par de cards
+quebrando em House x Parcerias (quantidade + VGV), é o único par de cards
 onde essa quebra faz sentido matemático (os outros 7 ou já são só House, ou
 são taxas/percentuais). Passe o mouse sobre o card pra ver. Se quiser estender
 a quebra pra outro card, ela precisa ser desenhada com um corte que faça
-sentido pra aquela métrica específica — não dá pra copiar direto.
+sentido pra aquela métrica específica, não dá pra copiar direto.
 
 ## 5. VGV por Empreendimento
 
@@ -103,23 +103,23 @@ Combo chart (barras + linha), visual nativo `lineStackedColumnComboChart`:
 | Pago x Orgânico | `fato_reservas[Pago ou Orgânico]` | `[Qtd Vendas Marketing (Mkt N1)]` |
 
 Ambos os campos já vêm prontos em `fato_reservas` (merge da classificação
-oficial já aplicado no Power Query do modelo vivo — confirmado, não é só
+oficial já aplicado no Power Query do modelo vivo, confirmado, não é só
 documentação).
 
 ⚠️ **NÃO usar `dim_origem["canal 2.0"]` aqui**, mesmo parecendo o candidato
 óbvio pelo nome. `gold.dim_origem` é `SELECT DISTINCT` só de `gold.fato_leads`
-(ver comentário em `gold.sql`) — cobre leads/pré-cadastro, não vendas. O
+(ver comentário em `gold.sql`), cobre leads/pré-cadastro, não vendas. O
 relacionamento `fato_reservas[Concat_origem] → dim_origem[origem_chave]`
 existe no modelo, mas só casa por coincidência (quando a mesma combinação de
 origem também apareceu do lado de leads); numa venda qualquer, o mais comum é
-não achar par nenhum e a fatia virar 100% "(Em branco)" — achado em
+não achar par nenhum e a fatia virar 100% "(Em branco)", achado em
 19/ago/2026 tentando montar esse exato donut.
 
 ⚠️ **KEEPFILTERS obrigatório**: as medidas de vendas desta página (`Qtd/VGV
 Vendas House/Marketing/Digital`, `% Vendas Digitais House`) filtram
 `Canal`/`Share` **dentro do próprio `CALCULATE`**. Sem `KEEPFILTERS`, um
 visual que agrupe por essa mesma coluna (como estes 2 donuts) mostra o MESMO
-total em toda fatia — o filtro da medida substitui o contexto do eixo em vez
+total em toda fatia, o filtro da medida substitui o contexto do eixo em vez
 de cruzar com ele. Corrigido em 19/ago/2026; se criar uma medida nova nesse
 padrão (filtro explícito de coluna dentro de CALCULATE) e for usá-la como
 valor de um visual agrupado por essa coluna, lembrar do `KEEPFILTERS`.
@@ -141,7 +141,7 @@ Gráfico de área empilhada, eixo `dim_calendario[mes_abrev]`, 3 séries:
 ## 9. Ícone de home
 
 Imagem estática (canto superior direito) com ação de navegação pra página
-inicial do relatório — mesmo padrão de outras páginas do modelo novo, se já
+inicial do relatório, mesmo padrão de outras páginas do modelo novo, se já
 existir um ícone equivalente reaproveite-o.
 
 ---
@@ -157,14 +157,14 @@ existir um ícone equivalente reaproveite-o.
 5. Combo chart VGV por Empreendimento (§5), donuts (§6), colunas Meta x
    Realizado (§7) e área empilhada (§8), nas posições equivalentes à print de
    referência.
-6. **Ctrl+S ao final** — todo o trabalho de medida feito por XMLA só existe no
+6. **Ctrl+S ao final**, todo o trabalho de medida feito por XMLA só existe no
    modelo em memória até isso.
 
 ## 11. Validação: como confiar nos números
 
-O ambiente local tem bronze parcial (mesma ressalva de sempre — ver
+O ambiente local tem bronze parcial (mesma ressalva de sempre, ver
 `powerbi/README.md`, §6). Além disso, a `dim_metas_performace_digital` só tem
-classificação `Share`/`Canal` fechada em `fato_reservas` até maio/2026 —
+classificação `Share`/`Canal` fechada em `fato_reservas` até maio/2026,
 junho a agosto ficam com esses campos em branco até o próximo fechamento
 manual da Vendas Consolidadas (comportamento esperado, documentado em
 `powerbi/de_para_classificacao_venda.m`). Pra validar os cards com dado

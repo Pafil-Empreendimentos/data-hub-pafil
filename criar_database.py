@@ -2,7 +2,7 @@
 
 O sql/bronze/bronze.sql cria o *schema* bronze e as tabelas, mas pressupõe que o
 *database* (PG_DB) já exista. Este script preenche essa lacuna — é o primeiro
-passo num PostgreSQL recém-provisionado (local, VPS ou Azure).
+passo num PostgreSQL recém-provisionado (local ou em produção).
 
 Conecta no database de manutenção `postgres`, verifica a existência de PG_DB e,
 se faltar, executa CREATE DATABASE (fora de transação, como o Postgres exige).

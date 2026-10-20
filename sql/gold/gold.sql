@@ -1,5 +1,5 @@
 -- Camada GOLD: star schema (fato + dimensões) sobre a silver, para o Power BI.
--- Aplicar com aplicar_gold.py. Ver MODELO_SEMANTICO.md e REGRAS_NEGOCIO.md.
+-- Aplicar com aplicar_gold.py. Ver docs/modelo-semantico.md e docs/regras-de-negocio.md.
 
 CREATE SCHEMA IF NOT EXISTS gold;
 
@@ -105,7 +105,7 @@ FROM silver.unidades;
 -- Share/House-Parcerias/Regional vêm do ESCRITÓRIO do corretor (DP-13): é assim que
 -- leads e pré-cadastros ganham a classificação que a reserva já tem via
 -- dpara_gerente_contexto. A junção usa `imobiliaria` (não a coluna `house` do
--- headcount, que tem linhas erradas) — decisão do dev em 21/jul/2026.
+-- headcount, que tem linhas erradas) — decisão do analista responsável em 21/jul/2026.
 --
 -- Datas de entrada/saída (10/set/2026): `dt_contratacao` é o começo do vínculo
 -- CORRENTE do corretor, e é o que dá o farol branco da página Performance ("não
@@ -148,7 +148,7 @@ ORDER BY silver.chave_nome(h.corretor), h.eh_ativo DESC, h.dt_contratacao DESC N
 
 -- Corretor + equipe. FONTE PRIMÁRIA da equipe (21/jul/2026, passo atrás): a planilha
 -- manual de headcount do backoffice (Nome -> Gerente/Supervisor), MUITO mais confiável
--- que qualquer derivação via CVDW — "o que vem do CVDW como equipes é falho" (dev).
+-- que qualquer derivação via CVDW — "o que vem do CVDW como equipes é falho" (analista responsável).
 -- A derivação antiga (gerente da reserva mais recente ⨝ dpara_gerente_contexto, com
 -- override DP-09) vira FALLBACK só para corretor que não está no headcount (ex.:
 -- corretor de imobiliária Parceria — a planilha só cobre o quadro próprio da Pafil).
@@ -347,7 +347,7 @@ SELECT
     -- fato_pre_cadastros. Ocultar no modelo; exibir "corretor".
     silver.chave_nome(r.corretor)                         AS corretor_chave,
     -- chave de relacionamento com gold.dim_perfil_cliente[documento_chave] (DP-15).
-    -- documento_cliente em si NÃO entra na fato (PII — ver MODELO_SEMANTICO.md);
+    -- documento_cliente em si NÃO entra na fato (PII — ver docs/modelo-semantico.md);
     -- só a chave hasheada, oculta no modelo.
     silver.chave_documento(r.documento_cliente)           AS documento_chave,
     r.imobiliaria, r.situacao, r.tipo_venda, r.midia, r.campanha,
@@ -667,7 +667,7 @@ FROM gold.fato_leads;
 
 
 -- Fato de pré-cadastros (1 linha/pré-cadastro) — funil de crédito. Página "Pré
--- Cadastro" do BI Matriz legado (REGRAS_NEGOCIO.md DP-05/KPI-25..27/37).
+-- Cadastro" do BI Matriz legado (docs/regras-de-negocio.md DP-05/KPI-25..27/37).
 --
 -- ETAPA BI / BI DETALHADA (DP-05): a "Situação" crua do CVCRM não é o funil de
 -- crédito que o negócio enxerga — dpara_etapa_precadastro (aba Apoio do Base -
@@ -784,7 +784,7 @@ LEFT JOIN LATERAL (
 -- ===========================================================================
 -- PREÇO / ESTOQUE / METAS / VIABILIDADE (task 6.4 do roadmap) — tabelas que NÃO
 -- vêm da API CVDW: planejamento/input manual da gestão (risco R5 do
--- REGRAS_NEGOCIO.md). Fonte: silver.d_estrutura / d_metas_empreendimentos /
+-- docs/regras-de-negocio.md). Fonte: silver.d_estrutura / d_metas_empreendimentos /
 -- d_viabilidade (seeds carregadas por popular_seeds.py a partir de base_precos.xlsm,
 -- Meta.xlsx e d_para empreendimentos.xlsx). Alimentam os insights do BI de Preço
 -- (estoque/VSO/margem) e Empreendimento x Meta — ver powerbi/MEDIDAS_ESTOQUE_PRECO.dax.
@@ -796,7 +796,7 @@ LEFT JOIN LATERAL (
 -- empreendimento) — o match usa (codigo_cv, bloco, unidade) normalizado via
 -- silver.chave_bloco/chave_unidade (funções compartilhadas com
 -- gold.dim_distratos_2025). Achados de validação acumulados (task 6.4/ago-2026,
--- ver R17 do REGRAS_NEGOCIO.md):
+-- ver R17 do docs/regras-de-negocio.md):
 --   1. bloco = nome do empreendimento (produto de torre única) — tratado como
 --      NULL nos dois lados por chave_bloco (por CONJUNTO de palavras, não string
 --      exata: achado "ARBORETTO RESIDENCIALE" x bloco "RESIDENCIALE ARBORETTO",
@@ -1049,7 +1049,7 @@ LEFT JOIN curva ON curva.codigo_cv = v.codigo_cv;
 
 -- distratos 2025 — detalhe financeiro (multa/pago/devolução/parcelas) que não vem
 -- da API CVDW; complementa gold.fato_reservas (que já cobre motivo/data/valor via
--- cvdw.distratos, fonte viva — ver R2 do REGRAS_NEGOCIO.md). Share/House-Parcerias/
+-- cvdw.distratos, fonte viva — ver R2 do docs/regras-de-negocio.md). Share/House-Parcerias/
 -- Regional reaproveitados de silver.dpara_gerente_contexto (DP-01) em vez de
 -- reimplementar a lista de nomes hardcoded que o DAX legado tinha por classificação.
 --
@@ -1155,7 +1155,7 @@ LEFT JOIN match m ON m._id_tecnico = d._id_tecnico;
 --
 -- O CSV manual (`silver.perfil_cliente_precadastro`/`_reserva`) NÃO foi
 -- descartado: continua como FALLBACK, usado só para `documento_chave` que não
--- tem nenhuma linha em `bronze.pessoas` (raro — checar REGRAS_NEGOCIO.md DP-15
+-- tem nenhuma linha em `bronze.pessoas` (raro — checar docs/regras-de-negocio.md DP-15
 -- para o tamanho real dessa lacuna após a virada).
 --
 -- Grão: 1 linha por documento_chave (CPF hasheado — nunca o CPF em claro, ver

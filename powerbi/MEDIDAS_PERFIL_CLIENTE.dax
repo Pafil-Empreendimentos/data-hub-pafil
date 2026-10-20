@@ -1,7 +1,7 @@
 // =============================================================================
 // Medidas — página "Perfil do Cliente", sobre a GOLD (gold.dim_perfil_cliente,
 // relacionada por documento_chave a gold.fato_reservas e/ou gold.fato_precadastros
-// — ver MODELO_SEMANTICO.md, "evite relacionar às duas fatos ao mesmo tempo").
+// — ver docs/modelo-semantico.md, "evite relacionar às duas fatos ao mesmo tempo").
 //
 // Substitui as 3 páginas do BI Matriz legado ("Perfil do Cliente", "Perfil do
 // Cliente Reserva", "Perfil do Cliente Pré Cadastro"), auditadas visual a visual
@@ -10,7 +10,7 @@
 // coluna), duas delas eram duplicata morta e página quebrada (travada num único
 // empreendimento por um filtro esquecido), ver seção 2 do documento. As páginas
 // liam um CSV manual exportado do CVCRM (perfil_cliente_precadastro.csv/
-// perfil_cliente_reserva.csv, 148 colunas), não a API CVDW. Ver REGRAS_NEGOCIO.md
+// perfil_cliente_reserva.csv, 148 colunas), não a API CVDW. Ver docs/regras-de-negocio.md
 // DP-15 pro levantamento completo (fill rate de cada fonte, escopo de colunas
 // excluídas por LGPD).
 //

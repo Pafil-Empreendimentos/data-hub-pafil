@@ -70,7 +70,7 @@ Três coisas para saber ler:
 - **"Espera" conta o tempo dentro da URA.** É a duração total menos o tempo falado, então o piso já é
   de dezenas de segundos para quem passou pela URA.
 
-## Ajustes pedidos pelo Igor (14/out/2026)
+## Ajustes pedidos pelo gestor comercial (14/out/2026)
 
 1. **KPIs na nova ordem:** Entradas, Ruído, Atendidas, Não atendidas, **% Não atendimento** (nova,
    `[% Não Atendimento Entrada Real]`), % Atendimento, Espera, Conversa. O cartão "Escolheram na URA"
@@ -92,7 +92,7 @@ Três coisas para saber ler:
    o botão de "abrir no próximo nível" (seta dupla) para ver os dias do mês clicado. No eixo do dia,
    Formatar > Eixo X > Tipo: Categórico, para os dias não virarem linha do tempo contínua.
 
-6. **URA sem ruído (16/out/2026, pedido do Igor).** A tabela das opções do menu e as roscas da URA seguem a
+6. **URA sem ruído (16/out/2026, pedido do gestor comercial).** A tabela das opções do menu e as roscas da URA seguem a
    mesma regra dos cartões e das tabelas de setor e ramal: ligação real, sem robocall e spam. Medidas
    novas `[Ligações URA Reais]` (2.687 de 3.174), `[Ligações URA Não Atendidas Reais]` (1.934),
    `[% Atendimento URA Real]` e `[% Não Atendimento URA Real]`. Atendida nunca é ruído, então
@@ -107,7 +107,7 @@ Três coisas para saber ler:
 atendidas, e a quase totalidade das não atendidas fica na linha **Sem ramal registrado**, em cinza e
 itálico. As colunas servem para ver quem atendeu e quanto esperou, não para a taxa de atendimento do
 setor. Total de setor/ramal usa ligações reais (sem ruído). Dá para tentar atribuir a não atendida ao setor
-pela opção da URA, mas é regra nova, e vale combinar com o Igor antes.
+pela opção da URA, mas é regra nova, e vale combinar com o gestor comercial antes.
 
 ## 2. Entradas por dia
 
@@ -254,7 +254,7 @@ lista alta. Os seis filtros, de cima para baixo:
 | 5 | Lista suspensa | Unidade | `dim_ramal[unidade]` | sem ramal 17.463, SEDE 3.444, HOUSE 518, Sem cadastro 63 |
 | 6 | Lista alta | Setor | `dim_ramal[setor_grupo]` | 16 setores com ligação atendida (a lista do slicer pode ter mais, de ramais sem atendimento) |
 
-**Painel v2 (15/out/2026, pedido do Igor): tudo na página tem que ser filtrável por setor, ramal, opção
+**Painel v2 (15/out/2026, pedido do gestor comercial): tudo na página tem que ser filtrável por setor, ramal, opção
 do menu, data (mês e dia) e unidade.** Os seis slots mantêm o estilo e mudam de campo, de cima para baixo:
 
 | # | Slot (estilo) | Filtro | Campo |
@@ -422,7 +422,7 @@ alguém guardou. A carga horária da VM passa a acumular o que o painel mostrar 
 
 ## Conferência antes de publicar
 
-Antes de abrir o Power BI, rode `python conferir_mdnet.py --de 2026-01-01 --ate 2026-10-05 --gold`:
+Antes de abrir o Power BI, rode `python -m ferramentas.conferir_mdnet --de 2026-01-01 --ate 2026-10-05 --gold`:
 a fato tem que ter o mesmo número de linhas da silver real, nenhum ramal pode ficar sem linha na
 dimensão e nenhuma ligação atendida pode estar marcada como ruído. Depois filtre a página numa
 janela fechada e compare com `--silver --ura`. Para setembro/2026, os números da gold são:
@@ -445,7 +445,7 @@ bater com eles, **no mesmo período e na mesma hora**. Para conferir:
 
 1. Atualize o Power BI (Atualizar) logo depois de uma carga. A carga roda de hora em hora, das 06:15 às
    18:15, então o painel web está sempre alguns minutos à frente do banco.
-2. Rode `python conferir_mdnet.py --de AAAA-MM-DD --ate AAAA-MM-DD --gold`, com o mesmo período do painel. A
+2. Rode `python -m ferramentas.conferir_mdnet --de AAAA-MM-DD --ate AAAA-MM-DD --gold`, com o mesmo período do painel. A
    primeira tabela reproduz os cartões do painel e põe a fato da gold ao lado.
 
 O que o Power BI mostra e o painel mostra, e por que cada diferença existe:

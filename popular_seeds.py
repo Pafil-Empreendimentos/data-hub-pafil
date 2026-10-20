@@ -1153,7 +1153,7 @@ def carregar_ramais(conn, xlsx: Path) -> int:
 
 def _ramais_padrao() -> str | None:
     """Sem --ramais nem DEPARA_RAMAIS_XLSX, usa o xlsx da pasta de de-paras
-    (DEPARA_DIR/depara_ramais/arquivo), a mesma que o montar_estrutura_depara.py preenche."""
+    (DEPARA_DIR/depara_ramais/arquivo), a mesma que o ferramentas/montar_estrutura_depara.py preenche."""
     pasta = os.getenv("DEPARA_DIR")
     if not pasta:
         return None
@@ -1164,14 +1164,14 @@ def _ramais_padrao() -> str | None:
 
 # Escopo de colunas do perfil de cliente (DP-15): das 148 colunas do CSV legado,
 # só as de valor analítico real e proporcional ao risco de LGPD (ver plano/decisão
-# registrada em REGRAS_NEGOCIO.md DP-15). EXCLUÍDO de propósito: nome, e-mail,
+# registrada em docs/regras-de-negocio.md DP-15). EXCLUÍDO de propósito: nome, e-mail,
 # telefone, RG/RNE/CNH/passaporte/PIS, filiação (mãe/pai), endereço completo
 # (rua/número), as 9 colunas "Banco - *" (0,2% preenchido — chave PIX, conta,
 # titular), as ~25 colunas de finanças de PJ, e os dados identificadores de
 # terceiros no bloco PPE (nome/CPF/nascimento do parente exposto — mantém só o
 # flag e o cargo do próprio titular). `documento` entra só como chave técnica de
 # join (nunca exposto na gold — mesmo tratamento de documento_cliente em
-# fato_reservas, ver MODELO_SEMANTICO.md).
+# fato_reservas, ver docs/modelo-semantico.md).
 _PERFIL_CLIENTE_COLUNAS = {
     "n": "N.",
     "documento": "Documento",
@@ -1226,7 +1226,7 @@ def _ler_perfil_cliente_csv(caminho: Path) -> list[dict]:
         um "�" antes do conserto rodar, e a string inteira (não só o caractere)
         fica sem reparo — ~1 em 15 no valor livre de profissão testado. É uma
         inconsistência real do arquivo de origem, não um bug daqui: documentar e
-        seguir (mesmo espírito das notas R19/R23 do REGRAS_NEGOCIO.md sobre erro de
+        seguir (mesmo espírito das notas R19/R23 do docs/regras-de-negocio.md sobre erro de
         digitação em planilha de origem);
       - usar csv.reader (não split manual): perfil_cliente_reserva.csv tem campos
         entre aspas, perfil_cliente_precadastro.csv não;

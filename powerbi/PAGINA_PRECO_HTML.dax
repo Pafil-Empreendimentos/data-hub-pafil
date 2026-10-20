@@ -1,7 +1,7 @@
 // =============================================================================
 // Página "Preço & Estoque" — visuais em HTML Content (task 6.5).
 //
-// Réplica da página que o dev tinha começado no BI legado (F16 Novo), agora
+// Réplica da página que o analista tinha começado no BI legado (F16 Novo), agora
 // parametrizada: uma página só serve os 14 produtos, com o slicer de
 // empreendimento. Nada de tabela/medida por produto.
 //

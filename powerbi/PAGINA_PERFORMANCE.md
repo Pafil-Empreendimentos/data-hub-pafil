@@ -158,7 +158,7 @@ farol erraria mais feio, cobrando venda de alguém que já está de saída.
 3. **Importe a tabela nova no Desktop**, por Obter dados, PostgreSQL, schema
    `gold`, tabela `fato_headcount_mensal`. Tem que ser pela interface: criar
    tabela por XMLA num `.pbix` aberto quebra o salvamento do arquivo (a lição
-   cara de 12 de agosto de 2026, registrada em `MODELO_SEMANTICO.md`).
+   cara de 12 de agosto de 2026, registrada em `docs/modelo-semantico.md`).
 
    **E traga as colunas novas de `dim_corretor_headcount`.** Se essa tabela já
    estava no seu modelo antes de 10 de setembro de 2026, um Atualizar não vai

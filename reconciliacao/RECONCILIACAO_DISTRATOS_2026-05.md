@@ -1,8 +1,8 @@
 # Reconciliação de distratos: maio de 2026
 
-**Atenção:** este documento contém valores reais de VGV e distratos da empresa. O
-repositório é privado; não redistribua esse conteúdo fora dele (veja a seção 7 de
-`SKILL.md`).
+**Atenção:** este documento contém valores reais de VGV e distratos da empresa. Mantenha
+o repositório privado e não redistribua esse conteúdo (veja a seção 3 de
+`docs/decisoes.md`).
 
 Esta comparação coloca lado a lado a pipeline nova (dados vindos da API, através
 de `silver.distratos`) e o CSV legado (`rel_distratos`, o fechamento mensal

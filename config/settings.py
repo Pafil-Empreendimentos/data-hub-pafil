@@ -150,7 +150,7 @@ class Objeto:
     # Ignora a janela do incremental e recarrega o objeto inteiro em toda
     # execução. É para os objetos cujo `data_referencia` na API não se move
     # quando um campo isolado é editado — nesses, uma correção feita depois da
-    # última movimentação nunca voltaria a ser lida (ver R26 em REGRAS_NEGOCIO.md).
+    # última movimentação nunca voltaria a ser lida (ver R26 em docs/regras-de-negocio.md).
     sempre_full: bool = False
 
 

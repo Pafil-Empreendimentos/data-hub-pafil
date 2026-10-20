@@ -5,7 +5,7 @@ Esta é uma comparação medida a medida entre o PBIX legado
 modelo novo, construído sobre a gold. O objetivo é entender quais números mudam,
 e por quê, antes de trocar o relatório que a gestão usa no dia a dia.
 
-> **Atualizado em 12 de agosto de 2026, no fim do dia:** o desenvolvedor decidiu a
+> **Atualizado em 12 de agosto de 2026, no fim do dia:** o analista responsável decidiu a
 > regra R22: a pipeline passou a ler a mesma matriz de preço do legado
 > (`Preço/Apoio/Apoio - BI de Preço.xlsm`), e a tabela `tab_viabil_padrão` foi
 > preenchida com as constantes recuperadas do DAX. As duas maiores fontes de

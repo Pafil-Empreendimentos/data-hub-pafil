@@ -1,5 +1,5 @@
 -- Camada SILVER: views de conformação sobre a bronze (tipagem forte, nomes de
--- negócio, flags de regra). Aplicar com aplicar_silver.py. Ver REGRAS_NEGOCIO.md.
+-- negócio, flags de regra). Aplicar com aplicar_silver.py. Ver docs/regras-de-negocio.md.
 
 CREATE SCHEMA IF NOT EXISTS silver;
 
@@ -119,7 +119,7 @@ $$ LANGUAGE sql STABLE;
 -- e gold.fato_precadastros com gold.dim_perfil_cliente (DP-15). Normaliza pra só
 -- dígitos e aplica hash: um CPF só de dígitos ainda é o próprio CPF (identificador
 -- direto de pessoa), então nunca entra cru no modelo do Power BI — mesmo tratamento
--- que já vale para documento_cliente (ver MODELO_SEMANTICO.md, "identificadores
+-- que já vale para documento_cliente (ver docs/modelo-semantico.md, "identificadores
 -- pessoais não entram na fato"). O hash preserva a igualdade determinística (dois
 -- documentos iguais sempre geram a mesma chave) sem deixar o CPF visível no relatório.
 CREATE OR REPLACE FUNCTION silver.chave_documento(doc text) RETURNS text AS $$

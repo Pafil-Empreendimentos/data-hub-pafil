@@ -20,7 +20,7 @@ restrito ao Fiusa) e, por fim, "Resumo".
 Cada página de empreendimento segue sempre a mesma estrutura, com tabelas
 duplicadas por produto (`PA_Matriz`/`PA_Vendas`, `TR_Matriz`/`TR_Vendas`, e assim
 por diante) e 9 medidas repetidas, cada uma com um prefixo diferente. É a regra R4
-do `REGRAS_NEGOCIO.md` levada ao extremo: 12 conjuntos de medidas idênticas, cada
+do `docs/regras-de-negocio.md` levada ao extremo: 12 conjuntos de medidas idênticas, cada
 um com suas próprias constantes de margem coladas diretamente no DAX.
 
 ```
@@ -172,7 +172,7 @@ Vale decidir isso olhando a página já montada.
 
 ### 3.7 A versão em HTML Content (é a que está montada hoje)
 
-O desenvolvedor responsável já tinha começado essa página no legado usando o
+O analista responsável já tinha começado essa página no legado usando o
 visual HTML Content, e a réplica seguiu pelo mesmo caminho: são 5 medidas em
 `powerbi/PAGINA_PRECO_HTML.dax`, todas já criadas no modelo, dentro da pasta
 `Preço/HTML`:
@@ -250,7 +250,7 @@ legado aberto ao mesmo tempo. O detalhe completo está em
 `reconciliacao/preco_legado_vs_gold.md`.
 
 **Desde 12 de agosto de 2026, a pipeline usa a mesma matriz de preço do legado**
-(o arquivo `Preço/Apoio/Apoio - BI de Preço.xlsm`), uma decisão do desenvolvedor
+(o arquivo `Preço/Apoio/Apoio - BI de Preço.xlsm`), uma decisão do analista responsável
 relacionada à regra R22. Com isso, o preço de tabela deixou de ser fonte de
 divergência: `EstoqueVGV` bate ao centavo em Arboretto e em Primaveras, e
 `MargemViab` bate até a 8ª casa decimal em 7 produtos. O que ainda diverge é o
@@ -292,7 +292,7 @@ duas vezes no mesmo dia:
    sessão do Desktop. Rodar `column_operations Create` seguido de um refresh
    falha com o erro "A coluna 'x' não existe no conjunto de linhas", e deixa a
    partição marcada como `Incomplete`, o que quebra até o refresh normal do
-   desenvolvedor. A única saída é reabrir o Power BI Desktop do zero.
+   analista responsável. A única saída é reabrir o Power BI Desktop do zero.
 2. **Uma tabela nova criada por XMLA impede que o arquivo seja salvo.** Ela
    entra como uma consulta que o editor do Power Query não reconhece como
    própria, então a barra de "alterações pendentes" aparece, e o botão "Aplicar

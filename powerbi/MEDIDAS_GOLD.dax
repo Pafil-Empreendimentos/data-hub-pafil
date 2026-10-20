@@ -1,7 +1,7 @@
 // =============================================================================
 // Medidas DAX — núcleo de vendas, sobre a camada GOLD (gold.fato_reservas).
 //
-// Reimplementação das medidas autoritativas do REGRAS_NEGOCIO.md (KPI-*) já
+// Reimplementação das medidas autoritativas do docs/regras-de-negocio.md (KPI-*) já
 // reconciliadas: o legado dependia de f_reservas (CSV manual); aqui apontam para
 // a fato vinda da API (silver -> gold). Cole numa tabela de medidas no Power BI.
 //
@@ -45,7 +45,7 @@ Taxa de Distrato = DIVIDE ( [QTD Distratos], [QTD Bruto] )    // KPI-18
 
 // ---- R1: definição alternativa de "venda" (Vendida ∪ Distrato) -------------
 // O legado usa as DUAS em contextos diferentes. Exponha ambas e deixe a gestão
-// decidir a autoritativa (ver REGRAS_NEGOCIO.md R1).
+// decidir a autoritativa (ver docs/regras-de-negocio.md R1).
 QTD Vendas (incl. distratadas) =  // KPI-08
 CALCULATE ( COUNTROWS ( fato_reservas ), fato_reservas[eh_venda_ou_distrato] = TRUE () )
 

@@ -29,7 +29,7 @@ tooltip ou de apoio para drill-down, não páginas de navegação normal.
 Um achado central desta auditoria: **nenhuma das três páginas tem uma única
 medida DAX própria.** Todo cartão, coluna ou rosca usa agregação implícita
 (`Sum`, `CountNonNull`) direto sobre uma coluna, seja da tabela `perfil cliente`
-(importada do CSV de 148 colunas documentado em DP-15 no `REGRAS_NEGOCIO.md`),
+(importada do CSV de 148 colunas documentado em DP-15 no `docs/regras-de-negocio.md`),
 seja de uma segunda tabela quase igual, `perfil cliente pré cadastro`. Isso já é
 um ponto de partida importante: a v3, ao criar medidas nomeadas em
 `MEDIDAS_PERFIL_CLIENTE.dax`, já parte na frente do legado em governança, mesmo
@@ -116,7 +116,7 @@ uma tabela nova e esqueceu o resto.
 
 Um terceiro problema, específico dessa tabela alternativa: o cartão de GÊNERO
 usa `Sum(perfil cliente pré cadastro.N.)` como valor. A coluna `N.` é a mesma
-coluna de numeração de linha já documentada em DP-15 no `REGRAS_NEGOCIO.md`
+coluna de numeração de linha já documentada em DP-15 no `docs/regras-de-negocio.md`
 (874 repetições em 7.805 linhas, não é uma chave única). Somar uma coluna de
 numeração de linha não produz uma contagem válida de nada; o valor exibido
 nesse card provavelmente já está errado hoje.
@@ -167,7 +167,7 @@ vez de herdar a contagem de pré-cadastro por padrão como o legado fez. A seç�
 
 ## 3. Atenção crítica para a montagem no Desktop: direção do relacionamento
 
-`MODELO_SEMANTICO.md` já documenta que `dim_perfil_cliente[documento_chave]`
+`docs/modelo-semantico.md` já documenta que `dim_perfil_cliente[documento_chave]`
 relaciona com `fato_reservas`/`fato_precadastros` como 1 para muitos, e
 recomenda nunca ativar as duas relações ao mesmo tempo (para não formar um
 losango de filtro com `dim_empreendimento`). O que ainda não estava registrado,
@@ -246,7 +246,7 @@ gráfico.
 | Estado Civil | `estado_civil` |
 | Gênero | `sexo` |
 | Idade | `idade` |
-| Nacionalidade | (fora de escopo na gold, ver DP-15 no `REGRAS_NEGOCIO.md`) |
+| Nacionalidade | (fora de escopo na gold, ver DP-15 no `docs/regras-de-negocio.md`) |
 | Naturalidade | (fora de escopo) |
 | Bairro | `bairro` |
 | Cidade | `cidade` |
@@ -261,7 +261,7 @@ gráfico.
 
 As colunas do CSV fora dessa lista (dados bancários, PJ, terceiros do bloco
 PPE, documentos como RG/CNH) foram excluídas por decisão de escopo e LGPD,
-documentada em DP-15 no `REGRAS_NEGOCIO.md` e em `MODELO_SEMANTICO.md`. Se a
+documentada em DP-15 no `docs/regras-de-negocio.md` e em `docs/modelo-semantico.md`. Se a
 gestão precisar delas para um caso de uso específico (por exemplo, auditoria de
 compliance), a extensão certa é trazer mais colunas de
 `bronze.pessoas`/`bronze.pessoas_profissional`, não reabrir a fonte manual.
@@ -281,7 +281,7 @@ Herdadas do relatório ad-hoc, da investigação de DP-15 e desta auditoria:
 - **6.2 A fonte de profissão/renda mudou no mesmo dia (24 de agosto de 2026),
   de CSV manual para a API CVDW** (`bronze.pessoas` mais
   `bronze.pessoas/profissional`, endpoint novo, ver DP-15 em
-  `REGRAS_NEGOCIO.md` para o histórico completo da investigação). A taxa de
+  `docs/regras-de-negocio.md` para o histórico completo da investigação). A taxa de
   match de `documento_chave` contra `fato_reservas` subiu de 85,9% para 96,9%,
   e o caso mais crítico do CSV (Residencial Quinta dos Ventos, vendas de 2026,
   que batia só 9,5% porque o CSV era um snapshot parado em agosto de 2025) foi
@@ -295,7 +295,7 @@ Herdadas do relatório ad-hoc, da investigação de DP-15 e desta auditoria:
 - **6.4 PPE e a lista de indivíduos suspeitos têm cobertura baixa por
   natureza** (poucas pessoas se enquadram); não é falha de dado.
 - **6.5 Sem banco, sem PJ, sem documento de identidade na gold**, decisão de
-  escopo e LGPD (DP-15 em `REGRAS_NEGOCIO.md`).
+  escopo e LGPD (DP-15 em `docs/regras-de-negocio.md`).
 - **6.6 A direção do relacionamento precisa ser trocada para "Ambas"** antes
   de montar qualquer visual que combine um slicer de empreendimento/data com
   uma medida de `dim_perfil_cliente` (ver seção 3). Sem essa troca, os

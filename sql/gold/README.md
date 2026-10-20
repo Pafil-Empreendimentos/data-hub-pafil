@@ -2,7 +2,7 @@
 
 Esta é a camada de consumo, usada diretamente pelo Power BI. É um star schema
 construído sobre a [silver](../silver/README.md), seguindo o desenho descrito em
-[`MODELO_SEMANTICO.md`](../../MODELO_SEMANTICO.md). As medidas, os KPIs e os
+[`docs/modelo-semantico.md`](../../docs/modelo-semantico.md). As medidas, os KPIs e os
 agregados ficam por conta do Power BI; aqui na gold entregamos apenas os fatos e
 as dimensões.
 

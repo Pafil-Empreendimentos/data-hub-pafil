@@ -17,7 +17,7 @@
 #                 edição de um campo isolado: sem isso, uma correção feita no
 #                 CVCRM depois da última movimentação nunca mais é relida.
 #                 Só vale a pena em objeto pequeno — ver R26 em
-#                 REGRAS_NEGOCIO.md.
+#                 docs/regras-de-negocio.md.
 #
 # Se o id detectado/fixado NÃO for único na amostra (caso típico de tabelas
 # "filhas", ex.: comissões por reserva), a descoberta cai automaticamente para

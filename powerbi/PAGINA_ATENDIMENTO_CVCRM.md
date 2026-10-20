@@ -6,9 +6,9 @@ Sobre `gold.fato_atendimentos_cvcrm`. As medidas estão em
 **Não confundir com a página "Atendimento" já existente**
 ([PAGINA_ATENDIMENTO.md](PAGINA_ATENDIMENTO.md)), que é o chat de WhatsApp via
 Blip. Esta página é o módulo de protocolo/ticket de pós-venda do próprio
-CVCRM — assistência técnica, financeiro, renegociação de contrato — um
+CVCRM, assistência técnica, financeiro, renegociação de contrato, um
 domínio diferente, sem nenhuma relação entre os dois fatos hoje. Ver DP-17 em
-`REGRAS_NEGOCIO.md` para como o endpoint foi descoberto e integrado.
+`docs/regras-de-negocio.md` para como o endpoint foi descoberto e integrado.
 
 ## Antes de montar
 
@@ -19,19 +19,19 @@ cliente (seção 5). O parágrafo abaixo descreve o motivo do layout enxuto da
 primeira versão e fica como histórico.
 
 **O volume ainda era muito baixo para valer um layout cheio de gráficos**: o
-ambiente `pafil` tinha só 10 atendimentos no total (não é amostra — é a
+ambiente `pafil` tinha só 10 atendimentos no total (não é amostra, é a
 população inteira, conferida direto na API). Com esse tamanho, qualquer
 gráfico de série temporal ou ranking vai ter uma ou duas barras. Por isso o
-layout abaixo é deliberadamente enxuto — uma faixa de KPIs e uma tabela de
-detalhe — em vez de replicar o layout cheio da página de Blip. Ele foi
+layout abaixo é deliberadamente enxuto, uma faixa de KPIs e uma tabela de
+detalhe, em vez de replicar o layout cheio da página de Blip. Ele foi
 desenhado para crescer: as mesmas medidas e a mesma tabela detalhe continuam
 válidas quando o volume aumentar, e é aí que valem visuais de tendência
 (criados x finalizados por mês, ranking por empreendimento/assunto).
 
-**HTML/CSS desde já, por decisão do dev** (16/set/2026): mesmo com volume
+**HTML/CSS desde já, por decisão do analista responsável** (16/set/2026): mesmo com volume
 baixo, a faixa de KPIs e a tabela de detalhe usam HTML Content, na mesma
 linguagem visual das páginas de Blip e Performance (fonte, azul `#003254`,
-cantos arredondados) — para a página já nascer com a cara do resto do
+cantos arredondados), para a página já nascer com a cara do resto do
 relatório, em vez de precisar de um retrabalho de estilo quando o volume
 crescer. As medidas HTML estão na seção "HTML/CSS" de
 `MEDIDAS_ATENDIMENTO_CVCRM.dax`.
@@ -50,12 +50,12 @@ não dá erro nenhum, só fica tudo em branco).
 ├──────────────────────────────────────────────────────────────────────┤
 │  3. Tabela de detalhe (HTML Content, 1 linha por atendimento)        │
 ├──────────────────────────────────────────────────────────────────────┤
-│  4. Esteira (HTML Content, kanban — réplica da tela nativa do CVCRM) │
+│  4. Esteira (HTML Content, kanban, réplica da tela nativa do CVCRM) │
 └──────────────────────────────────────────────────────────────────────┘
 ```
 
 A esteira (seção 4) é opcional e pode virar uma página separada se a página
-principal ficar muito cheia — ela replica uma tela inteira do CVCRM
+principal ficar muito cheia, ela replica uma tela inteira do CVCRM
 ("Andamento dos atendimentos"), então tem uma pegada visual própria, diferente
 da faixa de KPIs + tabela.
 
@@ -84,11 +84,11 @@ Dois cuidados de leitura:
 
 - `[Atendimentos Em Aberto]` (dentro da medida HTML) é uma foto do momento
   (`REMOVEFILTERS` no calendário), igual ao cartão equivalente da página de
-  Blip — não soma com Finalizados + Cancelados dentro de um período filtrado.
+  Blip, não soma com Finalizados + Cancelados dentro de um período filtrado.
 - `[Tempo Médio de Finalização (horas)]` mostra "--" quando não há nenhum
   atendimento finalizado no filtro corrente. Não é erro de relacionamento.
 
-**Mudança de 14/out/2026, pegar e atender:** a pedido do Igor entraram TEMPO PARA PEGAR e
+**Mudança de 14/out/2026, pegar e atender:** a pedido do gestor comercial entraram TEMPO PARA PEGAR e
 TEMPO DE ATENDIMENTO ao lado do TEMPO DE FINALIZAÇÃO. Valem só para atendimento finalizado. A
 definição de cada um, os números e a origem do dado (endpoint `atendimentos/workflow/tempo`)
 estão na seção 7.
@@ -105,7 +105,7 @@ visual HTML Content removê-lo, nada quebra. As medidas dos cartões são `[Temp
 de média (`[Tempo Médio de Pegar (horas)]`, `[Tempo Médio de Atender (horas)]` e
 `[Tempo Médio de Finalização (horas)]`) seguem no modelo, só não aparecem na faixa.
 
-**Mudança de 14/out/2026, avaliação:** o cartão AVALIAÇÃO saiu a pedido do Igor. Só 1 de 441
+**Mudança de 14/out/2026, avaliação:** o cartão AVALIAÇÃO saiu a pedido do gestor comercial. Só 1 de 441
 atendimentos tinha avaliação, então a média do cartão se apoiava num caso só. As
 medidas `[Avaliação Média]` e `[Qtd Avaliações]` continuam no modelo. **Em 15/out/2026 a
 coluna AVALIAÇÃO também saiu da tabela de detalhe**, pelo mesmo motivo. O dado segue em
@@ -189,7 +189,7 @@ resolve se for o caso.
 ## 3. Tabela de detalhe (com clique)
 
 **Visual:** HTML Content, configurado para o clique numa linha filtrar o
-resto da página (igual à tabela do Blip) — o que exige o campo Granularity
+resto da página (igual à tabela do Blip), o que exige o campo Granularity
 preenchido, e não só Values. Sem Granularity, o visual recebe o HTML inteiro
 de uma vez, como um texto único, e clicar não faz nada; é a diferença entre
 esta versão e a tabela estática que veio antes dela.
@@ -220,35 +220,35 @@ exato de cada atendimento, e não a mediana dos cartões. A tabela tem 10 coluna
 junto, senão a grade desalinha.
 
 **Por que Granularity é o campo `id_atendimento`, e não `protocolo`:** é a
-chave técnica do grão do fato — uma linha da tabela é sempre um atendimento,
+chave técnica do grão do fato, uma linha da tabela é sempre um atendimento,
 nunca dois com o mesmo id, então o clique nunca ambiguiza qual registro foi
 selecionado. `protocolo` até funcionaria hoje (também é único), mas
 `id_atendimento` é a chave de verdade do modelo.
 
 Com 10 linhas, a tabela de detalhe carrega mais peso analítico do que os
-cartões — é nela que a gestão consegue de fato ler cada ticket, o que os
+cartões, é nela que a gestão consegue de fato ler cada ticket, o que os
 agregados ainda não sustentam sozinhos. E com o clique ativo, selecionar uma
-linha já filtra a faixa de KPIs pra aquele atendimento específico — útil pra
+linha já filtra a faixa de KPIs pra aquele atendimento específico, útil pra
 conferir um caso pontual sem sair da página.
 
 ## 4. Esteira (kanban)
 
 Réplica da tela nativa "Andamento dos atendimentos" do CVCRM: 6 colunas fixas,
 **na ordem certa agora** (Novo Atendimento → Triagem → Time Cobrança → Time
-Atendimento → Time Crédito → Em Atendimento — o `ASC` por nome da primeira
+Atendimento → Time Crédito → Em Atendimento, o `ASC` por nome da primeira
 versão embaralhava isso alfabeticamente, corrigido), cabeçalho na cor da
 paleta de KPIs (azul `#003254` na primeira coluna, vermelho `#8A1C1C` nas
-demais — mesma paleta da faixa de KPIs da seção 1, pedido de harmonia
+demais, mesma paleta da faixa de KPIs da seção 1, pedido de harmonia
 visual), e um cartão por atendimento com protocolo, cliente, bloco/unidade +
 empreendimento, assunto/subassunto e um rodapé "+ INFORMAÇÕES". Cancelado e
-Finalizado ficam de fora — a tela nativa mostra o que está em andamento, não
+Finalizado ficam de fora, a tela nativa mostra o que está em andamento, não
 o histórico encerrado. Fontes bem maiores que o resto do arquivo, calibradas
 pro tamanho real desta página (4500×3800) e deste visual (4253 de largura ×
 876 de altura, ~708px por coluna).
 
-**Passe o mouse sobre um cartão** para expandir um bloco de estatísticas —
-CRIADO HÁ, NA SITUAÇÃO, INTERAÇÕES, ÚLT. ATUALIZAÇÃO —, inspirado na tela
-expandida que você mandou de exemplo. As três linhas de "VENCIMENTO DE SLA"
+**Passe o mouse sobre um cartão** para expandir um bloco de estatísticas:
+CRIADO HÁ, NA SITUAÇÃO, INTERAÇÕES, ÚLT. ATUALIZAÇÃO, inspirado na tela
+expandida de um exemplo recebido. As três linhas de "VENCIMENTO DE SLA"
 daquele print (por assunto/subassunto/workflow) **não entraram**: o endpoint
 `atendimentos` do CVDW não traz prazo de SLA em nenhum dos 60 campos. **Atualização
 de 14/out/2026:** o SLA existe em outra rota da API, `relacionamento/atendimentos/listar`
@@ -275,19 +275,19 @@ Finalizado em primeiro).
 
 ### Sobre o clique: filtra por COLUNA (situação), não por cartão individual
 
-Foi pedido clique que filtre a página igual à tabela de detalhe — mas manter
+Foi pedido clique que filtre a página igual à tabela de detalhe, mas manter
 as 6 colunas sempre visíveis (mesmo com 0 atendimentos, que é o caso de 5 das
 6 hoje) e ter clique por CARTÃO individual são **tecnicamente incompatíveis**
 neste visual: o HTML Content só cross-filtra quando o campo Granularity tem
 uma linha por "coisa clicável", e se essa linha fosse por cartão
 (`id_atendimento`), uma coluna sem nenhum atendimento não teria nenhuma linha
-pra existir — o visual mostraria só a mensagem genérica de "sem dados" no
+pra existir, o visual mostraria só a mensagem genérica de "sem dados" no
 lugar, sem cor, sem cabeçalho, sem "0 Registro(s)". Esse caminho foi testado
 primeiro e descartado por isso.
 
 A solução foi Granularity por COLUNA: clicar em qualquer lugar de uma coluna
 (cabeçalho ou fundo, em qualquer cartão dentro dela) seleciona aquela
-situação inteira e filtra o resto da página — inclusive a faixa de KPIs e a
+situação inteira e filtra o resto da página, inclusive a faixa de KPIs e a
 tabela da seção 3. Pra clique por atendimento individual, a tabela de
 detalhe da seção 3 já resolve isso.
 
@@ -296,7 +296,7 @@ colar medida):**
 
 1. **Criar a tabela de apoio:** Modelagem → Nova tabela → cole o conteúdo de
    `Esteira Colunas` (é uma DATATABLE, 6 linhas: situação, tema de cor,
-   ordem). Não é medida — não cole como "Nova medida".
+   ordem). Não é medida, não cole como "Nova medida".
 2. **Criar o relacionamento:** Modelagem → Gerenciar relacionamentos → Nova:
    `'Esteira Colunas'[situacao]` (lado 1) → `fato_atendimentos_cvcrm[situacao]`
    (lado vários). Direção do filtro: única (padrão).
@@ -313,7 +313,7 @@ colar medida):**
 | Classificar por | Ordem Esteira CVCRM (ordenação), crescente |
 | Formatar > Stylesheet > fx | `[CSS Esteira Atendimentos CVCRM]` |
 | Formatar > Cross-filtering | Ativar, Transparency 0 |
-| Formatar > No data message | (deixe em branco — com a tabela de apoio, o Granularity nunca fica vazio, então essa mensagem nunca aparece) |
+| Formatar > No data message | (deixe em branco, com a tabela de apoio, o Granularity nunca fica vazio, então essa mensagem nunca aparece) |
 
 ## 5. Humor do cliente (pizza) e encerramento no 1º contato
 
@@ -385,7 +385,7 @@ tem escala própria no eixo Y.
 
 ## 7. Tempo para pegar e para atender (14/out/2026)
 
-O Igor pediu três tempos na faixa de KPIs: pegar, atender e finalizar. O CVDW entrega o que é
+O gestor comercial pediu três tempos na faixa de KPIs: pegar, atender e finalizar. O CVDW entrega o que é
 preciso, no endpoint `atendimentos/workflow/tempo`.
 
 **Correção de uma versão anterior desta seção.** Na manhã de 14/out ela dizia que o CVCRM não
@@ -548,7 +548,7 @@ A view nova da silver e as colunas novas da gold usam `CREATE OR REPLACE`, sem D
 
 ## Pendências conhecidas
 
-- `id_corretor`/`corretor` vinham vazios nos 10 registros da primeira versão —
+- `id_corretor`/`corretor` vinham vazios nos 10 registros da primeira versão,
   sem relacionamento com `dim_corretor` por ora (ver nota no `gold.sql`).
   Reconferir agora que são 329 e ligar se o campo passou a vir preenchido.
 - Unidade de `tempo_finalizado`: **minutos**, confirmada em 08/out/2026 (ver
@@ -557,5 +557,5 @@ A view nova da silver e as colunas novas da gold usam `CREATE OR REPLACE`, sem D
 - Rótulos `Irritado` e `Satisfeito` do humor: inferidos, não confirmados contra
   o dropdown do CVCRM (seção 5).
 - `origem` (2 letras) e `canal` (Telefone/Email/Whatsapp) ainda não têm
-  de-para nem página de referência — expostos crus, prontos pra virar slicer
+  de-para nem página de referência, expostos crus, prontos pra virar slicer
   quando fizer sentido de negócio.

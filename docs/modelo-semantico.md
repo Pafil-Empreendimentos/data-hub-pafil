@@ -15,7 +15,7 @@ PostgreSQL gold  ──►  Power BI Desktop  ──►  relatório
 ```
 
 Para o passo a passo de conectar e montar o relatório, veja
-[`powerbi/README.md`](powerbi/README.md).
+[`powerbi/README.md`](../powerbi/README.md).
 
 ---
 
@@ -71,7 +71,7 @@ montar medidas:
 | `dim_empreendimento` | derivada de `unidades` (e também de `reservas`) | `idempreendimento` | nome do empreendimento, região, tipo de empreendimento |
 | `dim_corretor` | `corretores` | `idcorretor` | nome, imobiliária, CRECI, se está ativo, categoria, nível |
 | `dim_calendario` | gerada dentro do próprio Power BI (DAX ou Power Query) | `Data` | ano, mês, trimestre, nome do mês, ano-mês |
-| `dim_perfil_cliente` | `pessoas` ⨝ `pessoas/profissional` (API CVDW); CSV manual só como fallback | `documento_chave` | profissão (macro/micro), renda, faixa etária, faixa de renda MCMV, PPE, grau de instrução, tempo de residência — ver DP-15 em `REGRAS_NEGOCIO.md` |
+| `dim_perfil_cliente` | `pessoas` ⨝ `pessoas/profissional` (API CVDW); CSV manual só como fallback | `documento_chave` | profissão (macro/micro), renda, faixa etária, faixa de renda MCMV, PPE, grau de instrução, tempo de residência, ver DP-15 em `docs/regras-de-negocio.md` |
 
 **`dim_empreendimento`** não tem um objeto próprio na API: ela é derivada da
 entidade `unidades`, e já está pronta como `gold.dim_empreendimento`.
@@ -87,19 +87,19 @@ cliente, cidade, sexo, idade, estado civil, renda). Trazer o objeto `pessoas`
 inteiro, que tem cerca de 98 colunas e concentra muito dado pessoal sensível (CPF,
 RG, CNH), não compensa neste momento do projeto.
 
-**`dim_perfil_cliente` (DP-15, agosto de 2026) não é essa `dim_cliente` adiada — é
+**`dim_perfil_cliente` (DP-15, agosto de 2026) não é essa `dim_cliente` adiada, é
 um recorte deliberadamente menor.** Traz profissão, renda, PPE e demografia,
-curados por LGPD — não os ~98 campos crus de `pessoas`. Fonte primária: a própria
+curados por LGPD, não os ~98 campos crus de `pessoas`. Fonte primária: a própria
 API CVDW, `bronze.pessoas` ⨝ `bronze.pessoas_profissional` (endpoint
-`pessoas/profissional`, um objeto novo, fora dos 19 originalmente descobertos —
+`pessoas/profissional`, um objeto novo, fora dos 19 originalmente descobertos,
 achado só depois de duas rodadas de investigação com amostra pequena terem
 concluído erradamente que profissão/renda não existiam na API; ver o histórico
-completo em `REGRAS_NEGOCIO.md` DP-15). Um CSV manual do CVCRM continua no repo
+completo em `docs/regras-de-negocio.md` DP-15). Um CSV manual do CVCRM continua no repo
 como *fallback* (`silver.perfil_cliente_precadastro`/`_reserva`), usado só para
 `documento_chave` sem nenhuma linha em `bronze.pessoas`. Ficam de fora as colunas
 mais sensíveis (dados bancários, finanças de PJ, documentos como RG/RNE/CNH/PIS,
-filiação, e os dados de terceiros no bloco PPE) — ver o detalhe completo em
-`REGRAS_NEGOCIO.md` DP-15. Grão: 1 linha por `documento_chave` (CPF hasheado via
+filiação, e os dados de terceiros no bloco PPE), ver o detalhe completo em
+`docs/regras-de-negocio.md` DP-15. Grão: 1 linha por `documento_chave` (CPF hasheado via
 `silver.chave_documento()`, nunca exposto em claro). Relaciona com `fato_reservas`
 e `fato_precadastros` pela mesma chave (ambas ganharam a coluna `documento_chave`
 para isso). `profissao_micro`/
@@ -110,7 +110,7 @@ congelado importado do CSV legado.
 modelo na task 6.4, em agosto de 2026. Juntas, cobrem a matriz de preço e estoque
 por unidade, as metas e o forecast mensal, e os parâmetros de margem por
 empreendimento. Nenhuma dessas três vem da API do CVDW: são planejamento e input
-manual da gestão (veja a regra R5 em `REGRAS_NEGOCIO.md`). Chegam ao banco por seed,
+manual da gestão (veja a regra R5 em `docs/regras-de-negocio.md`). Chegam ao banco por seed,
 através dos comandos `popular_seeds.py --estrutura-precos`,
 `--metas-empreendimentos` e `--viabilidade`, a partir das planilhas
 `base_precos.xlsm`, `Meta.xlsx` e `d_para empreendimentos.xlsx`. Elas se relacionam
@@ -119,7 +119,7 @@ com `dim_empreendimento` pelo par de colunas `codigo_cv` e
 `powerbi/MEDIDAS_ESTOQUE_PRECO.dax` (Estoque, VSO, Margem) e em
 `powerbi/MEDIDAS_GOLD.dax` (Meta, Forecast, % de Atingimento). O detalhe de colunas,
 e um achado interessante sobre a normalização do campo `bloco` em produtos de torre
-única, estão descritos na seção 3 e na regra R17 de `REGRAS_NEGOCIO.md`.
+única, estão descritos na seção 3 e na regra R17 de `docs/regras-de-negocio.md`.
 
 **`dim_ivv_padrao` e `d_empreendimento_legado`** entraram em agosto de 2026 e trazem
 a curva padrão de IVV (velocidade de vendas), organizada por empreendimento e por
@@ -168,7 +168,7 @@ dim_perfil_cliente[documento_chave] ──1:*── fato_reservas[documento_chav
   `documento_chave` (não desenhado no diagrama acima por já ter cliente
   fato_reservas/fato_precadastros ligados entre si por `id_precadastro`; evite
   relacionar `dim_perfil_cliente` às duas fatos ao mesmo tempo, para não formar um
-  losango de filtro — prefira relacionar só à fato que a página realmente usa).
+  losango de filtro, prefira relacionar só à fato que a página realmente usa).
 
 - A fato tem várias colunas de data (`data_cad`, `data_venda`, `data_cancelamento`,
   entre outras). A recomendação é deixar apenas um relacionamento ativo com

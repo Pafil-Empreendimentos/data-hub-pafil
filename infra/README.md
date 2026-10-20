@@ -1,131 +1,189 @@
-# Runbook da infraestrutura de produção (Fase 7): versão Linux (histórico)
+# Produção: a máquina Windows
 
-> **Atualização de 20 de agosto de 2026:** a EC2 Linux deste documento nunca
-> chegou a ser provisionada. A TI liberou, em vez disso, credenciais de RDP
-> para uma **máquina Windows 10 Pro física ou local** (confirmado por teste:
-> o endereço de metadados da AWS deu timeout nela, então não é sequer uma
-> instância AWS de qualquer sistema operacional). O runbook que reflete o que
-> existe de verdade agora é [`RUNBOOK_WINDOWS.md`](RUNBOOK_WINDOWS.md); a
-> linha do tempo completa da decisão está na memória "hospedagem-producao".
-> Este arquivo continua aqui como referência: se a empresa algum dia migrar o
-> banco para uma instância Linux de verdade, os scripts `.sh` e `systemd/`
-> abaixo voltam a valer sem alteração.
+Como o banco e as cargas rodam na máquina Windows da empresa: instalação, tarefas agendadas,
+backup, acesso do analista e o que fazer quando algo dá errado. Para o panorama geral, veja
+[`docs/arquitetura.md`](../docs/arquitetura.md).
 
-Este é o passo a passo para sair do estado "nada provisionado" até chegar a "Power
-BI lendo a camada gold no servidor da empresa". Ele cobre as etapas 7.2 a 7.5 do
-`Roadmap_Projeto_Gestao.xlsx`. A etapa 7.1, que é pedir a instância, está descrita
-no documento [`PEDIDO_TI.md`](PEDIDO_TI.md).
+A máquina é uma estação Windows 10 Pro física, acessada por RDP com credenciais passadas pela
+TI. Ela não é uma instância de nuvem: não há Security Group, disco gerenciado nem snapshot
+automático por trás dela. Isso muda duas coisas importantes:
+
+- o **Firewall do Windows** é a principal defesa de rede (seção 7);
+- o **backup diário** é a única proteção contra perda de disco, e só vale se for copiado para
+  fora da máquina (seção 5).
+
+## Tarefas agendadas
+
+Todas rodam como `SYSTEM`, então funcionam mesmo sem ninguém logado. O fuso é o de Brasília.
+
+| Tarefa | Quando | Comando | Log |
+|---|---|---|---|
+| `PafilDW - Backup diario` | todo dia, 05:00 | `powershell -File C:\pafil\app\infra\backup_pg.ps1` | |
+| `PafilDW - Ingestao diaria` | de hora em hora, das 06:00 às 18:00 | `python ingestao.py --incremental` | `C:\pafil\logs\ingestao.log` |
+| `PafilDW - Blip diario` | de hora em hora, a partir das 06:05 | `python ingerir_blip.py --full` | `C:\pafil\logs\blip.log` |
+| `PafilDW - MDnet diario` | de hora em hora, a partir das 06:15 | `powershell -File C:\pafil\app\infra\ingerir_mdnet.ps1` | `C:\pafil\logs\mdnet.log` |
+
+Os minutos de diferença entre as cargas são de propósito: as três escrevem no mesmo banco, e
+não há motivo para disputarem conexão no mesmo instante. Como registrar cada uma está nas
+seções 5, 5.1 e 5.2.
+
+Os de-paras (`popular_seeds.py`) **não** rodam na máquina: são atualizados do notebook do
+analista, por túnel SSH (seção 4).
 
 ## O que tem nesta pasta
 
 | Arquivo | Para que serve |
 |---|---|
-| [`PEDIDO_TI.md`](PEDIDO_TI.md) | Documento de apoio para a reunião com a TI (etapa 7.1) |
-| [`provisionar_postgres.sh`](provisionar_postgres.sh) | Instala e configura o Postgres 16 na instância (etapa 7.2) |
-| [`conf/postgresql-pafil.conf`](conf/postgresql-pafil.conf) | O tuning específico do projeto, aplicado como um drop-in de configuração |
-| [`backup_pg.sh`](backup_pg.sh) | Roda o `pg_dump` diário, com retenção configurada (e envio opcional ao S3) |
-| [`systemd/`](systemd/) | O service e o timer da ingestão diária, rodando na própria EC2 (etapa 7.4) |
-| [`grants_bi.sql`](grants_bi.sql) | Concede ao Power BI a permissão de leitura sobre a gold (etapa 7.5) |
+| [`provisionar_postgres.ps1`](provisionar_postgres.ps1) | Aplica a configuração do projeto sobre um Postgres já instalado: arquivo de tuning, `pg_hba.conf`, roles `pafil_app` e `pafil_bi` e o banco `pafil_dw` |
+| [`conf/postgresql-pafil-windows.conf`](conf/postgresql-pafil-windows.conf) | O tuning do projeto, aplicado como arquivo complementar (drop-in) |
+| [`backup_pg.ps1`](backup_pg.ps1) | `pg_dump` diário, com retenção e cópia para fora da máquina |
+| [`ingerir_mdnet.ps1`](ingerir_mdnet.ps1) | Roda as três cargas da MDnet em sequência |
+| [`grants_bi.sql`](grants_bi.sql) | Dá ao Power BI a leitura das camadas silver e gold |
+
+## Como o banco fica sempre ligado, mesmo sem ninguém logado
+
+Num notebook sem administrador, o Postgres roda como um processo comum do usuário e morre
+a cada logoff. Nesta máquina há administrador de verdade, e isso muda o mecanismo:
+
+- **O Postgres roda como Serviço do Windows.** O instalador oficial já
+  registra o `postgres.exe` como serviço, numa sessão de sistema separada da
+  sua sessão de RDP. Fechar o RDP, desconectar, ou até deslogar, não afeta um
+  serviço. Só um `Stop-Service` explícito, ou desligar a máquina, para o
+  banco. Não existe truque nenhum aqui além de deixar o `Startup Type` como
+  `Automatic`, que é o padrão do instalador (o `provisionar_postgres.ps1`
+  confirma isso de qualquer forma).
+- **Desconectar do RDP não é a mesma coisa que deslogar.** Se você fechar a
+  janela do RDP (ou clicar no X), a sessão fica em estado "Disconnected", mas
+  os programas que você deixou abertos dentro dela continuam rodando.
+  Reconectando depois, você encontra tudo do jeito que deixou, como uma
+  sessão do `tmux`. Isso só some se alguém escolher explicitamente "Sign out"
+  na sessão, ou se a máquina reiniciar. Então, para rodar algo longo
+  interativamente (a carga `--full`, por exemplo), já basta desconectar sem
+  deslogar. Se a política de segurança da empresa tiver um GPO de logoff
+  automático em sessões desconectadas, use o Agendador de Tarefas em vez
+  disso (seção 5 abaixo), que é imune a isso de qualquer forma.
+- **A automação diária roda como conta `SYSTEM` no Agendador de Tarefas.**
+  Uma tarefa rodando como `SYSTEM` não depende de nenhuma sessão de usuário
+  estar aberta, então funciona mesmo com ninguém logado na máquina.
+
+Combinando os três: o único jeito de o banco realmente cair é alguém parar o
+serviço de propósito, ou a máquina ser desligada. Nenhum dos dois acontece
+por causa de logoff.
+
+**Ressalva:** como é Windows 10 Pro, e não Server, só é permitida **uma sessão remota por vez**. Se outra pessoa
+(inclusive alguém da TI) logar nessa máquina localmente ou por RDP enquanto
+você está conectado, sua sessão é desconectada. Isso não derruba o Postgres
+nem as tarefas agendadas (são serviços do sistema, não dependem da sua
+sessão), mas vale confirmar com a TI se esta máquina é de uso exclusivo do
+projeto, ou se é compartilhada com outra finalidade.
 
 ---
 
-## 0. Pré-requisitos (o que a TI precisa entregar antes de começar)
+## 1. Primeiro acesso e conferência do ambiente
 
-- [ ] Instância EC2 em `sa-east-1`, com 2 vCPU, 4 GB de RAM, 50 GB em `gp3`, sempre
-      ativa
-- [ ] Sistema operacional definido: Ubuntu 22.04/24.04 LTS ou Amazon Linux 2023 (o
-      script de provisionamento cobre os dois)
-- [ ] Security Group sem nenhuma regra de entrada para a porta 5432
-- [ ] Acesso administrativo configurado: um IAM Instance Profile com a policy
-      `AmazonSSMManagedInstanceCore` (recomendado), ou então uma chave SSH
-      combinada com uma lista de IPs liberados, incluindo o IP fixo do analista
-- [ ] Saída para a internet liberada por HTTPS: a instância precisa alcançar
-      `pafil.cvcrm.com.br` e os repositórios de pacotes do sistema operacional
-- [ ] Snapshot diário do EBS já configurado
+Conecte pelo Remote Desktop Connection (`mstsc`) do Windows, usando o IP e as
+credenciais que a TI passou. Assim que entrar, rode isto num PowerShell
+elevado (botão direito, "Executar como Administrador"). Repare que os
+comandos usam `Get-CimInstance`, não `systeminfo`/`whoami /groups`: essas
+duas ferramentas devolvem texto no idioma do Windows instalado, e essa
+máquina está em português, então um filtro de texto em inglês (`Select-String
+"OS Name"`) não acha nada e falha em silêncio. `Get-CimInstance` devolve
+nomes de propriedade em inglês sempre, independente do idioma do sistema:
 
-> Se o acesso for por SSM, nada mais precisa ser configurado do lado da rede: o
-> Session Manager é a instância que se conecta para fora, em direção ao serviço da
-> AWS, não o contrário.
-
-## 1. Primeiro acesso
-
-**Pelo SSM (recomendado).** Na máquina do analista, com a AWS CLI e o plugin do
-Session Manager já instalados:
-
-```bash
-aws ssm start-session --target i-XXXXXXXXXXXX --region sa-east-1
+```powershell
+Get-CimInstance Win32_OperatingSystem | Select-Object Caption, Version, OSArchitecture, @{n='RAM_GB';e={[math]::Round($_.TotalVisibleMemorySize/1MB,1)}}
+Get-CimInstance Win32_Processor | Select-Object Name, NumberOfCores, NumberOfLogicalProcessors
+Get-Volume | Select-Object DriveLetter, FileSystemLabel, SizeRemaining, Size
+Get-PhysicalDisk | Select-Object FriendlyName, MediaType, Size
+([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
 ```
 
-**Pelo SSH (alternativa):**
+O que conferir:
 
-```bash
-ssh -i ~/.ssh/pafil-dw.pem ubuntu@<ip-privado-ou-publico>
+- **Memória real.** O `postgresql-pafil-windows.conf` foi escrito com os
+  valores de um pedido original à TI (2 vCPU / 4 GB), que não são os desta
+  máquina. Ajuste `shared_buffers` (~25% da RAM) e
+  `effective_cache_size` (~75% da RAM) para o valor real de RAM_GB acima
+  antes do passo 2.
+- **Tipo de disco (`MediaType` do `Get-PhysicalDisk`).** O drop-in de config
+  assume `random_page_cost = 1.1`, que só faz sentido em SSD. Se o resultado
+  vier `HDD` (ou `Unspecified` numa máquina antiga, o que é comum), volte
+  esse parâmetro para o padrão do Postgres (`4.0`) antes de aplicar a
+  configuração, ou o planner do banco vai tomar decisões erradas de índice.
+- **Discos disponíveis.** Se houver um segundo volume além do `C:`, é
+  possível apontar o diretório de dados do Postgres para lá no passo 2. Se só
+  existir o `C:`, confirme que sobra espaço suficiente (o banco tem hoje
+  cerca de 777 mil linhas na bronze, folga de alguns GB já é confortável).
+- **Direitos de administrador.** O último comando acima precisa devolver
+  `True`. Sem isso, nenhum passo deste runbook funciona.
+
+## 2. Instalar e configurar o PostgreSQL
+
+O `provisionar_postgres.ps1` não instala o Postgres: ele só configura por
+cima de uma instalação que já existe. Instale primeiro pelo instalador
+oficial da EnterpriseDB (o mesmo distribuidor usado no `pg_local.ps1` de
+desenvolvimento), baixando a versão **16** para Windows x86-64 no site oficial
+do PostgreSQL. Durante a instalação:
+
+- Anote a senha do superusuário `postgres` que você definir no instalador.
+  Ela não é salva em lugar nenhum pelo instalador, e o script do passo
+  seguinte vai pedir ela.
+- Deixe o "Data Directory" no padrão, dentro do `C:`. O `D:` desta máquina
+  (rotulado "DADOS") está com só ~200 MB livres de 480 GB, não serve de
+  destino. O `C:` tem ~105 GB livres, de sobra para este projeto.
+- Deixe a porta como `5432` (padrão) e o locale como `Portuguese, Brazil` ou
+  `C` (qualquer um serve, a camada silver já tipa os dados explicitamente).
+- Pode desmarcar o Stack Builder ao final, não é necessário.
+
+Confirme que o serviço subiu:
+
+```powershell
+Get-Service postgresql*
 ```
 
-Antes de seguir adiante, confirme que a instância está atualizada e enxerga a
-internet:
+(Nesta máquina já confirmado: os dois discos são SSD, então o
+`random_page_cost = 1.1` do drop-in já está correto, não precisa mexer. Se a
+máquina mudar no futuro, reconfira com `Get-PhysicalDisk` antes deste passo.)
 
-```bash
-curl -sSf -o /dev/null https://pafil.cvcrm.com.br && echo "API alcançável"
+Agora clone o repositório na máquina (instale o Git primeiro, se não estiver
+presente: `winget install --id Git.Git -e`) e rode o script de configuração:
+
+```powershell
+git clone https://github.com/arturvillasboas/data-hub-pafil.git C:\pafil\app
+cd C:\pafil\app\infra
+.\provisionar_postgres.ps1
 ```
 
-## 2. Instalar o PostgreSQL (etapa 7.2)
-
-Primeiro, traga o repositório para dentro da instância. Use uma deploy key de
-leitura do repositório privado (em Settings → Deploy keys), nunca a sua chave
-pessoal:
-
-```bash
-sudo install -d -o "$USER" -g "$USER" /opt/pafil
-git clone git@github.com:<org>/<repo>.git /opt/pafil/app
-```
-
-Depois, rode o script de provisionamento:
-
-```bash
-sudo bash /opt/pafil/app/infra/provisionar_postgres.sh
-```
-
-O script é idempotente (pode ser rodado mais de uma vez sem causar problema) e faz
-o seguinte, nesta ordem: ajusta o timezone e ativa os patches automáticos, instala
-o PostgreSQL 16 (usando o repositório PGDG no Ubuntu, ou o `dnf` no Amazon Linux
-2023), aplica o arquivo `conf/postgresql-pafil.conf`, escreve um `pg_hba.conf` que
-só aceita conexões locais, cria o banco `pafil_dw` e as roles `pafil_app` (a dona
-do banco) e `pafil_bi` (somente leitura), e por fim instala o backup diário.
-
-As senhas são geradas na própria máquina e gravadas em
-`/root/pafil_credenciais.txt`, com permissão 0600. Leia esse arquivo com
-`sudo cat /root/pafil_credenciais.txt` e copie os valores de lá para o `.env`.
-Nenhuma senha passa por argumento de linha de comando ou fica salva no histórico
-do shell.
+O script vai pedir a senha do `postgres` uma vez, e então: escreve o
+`postgresql-pafil.conf` como drop-in, restringe o `pg_hba.conf` a conexões
+locais com senha (`scram-sha-256`), cria os roles `pafil_app` (dono do banco)
+e `pafil_bi` (somente leitura), cria o banco `pafil_dw`, grava as senhas
+geradas em `C:\pafil\pafil_credenciais.txt` (permissão restrita ao grupo
+Administrators via `icacls`), e confirma que o serviço está com `Startup
+Type = Automatic`.
 
 Para conferir que deu certo:
 
-```bash
-sudo -u postgres psql -c "\l pafil_dw" -c "\du"
-systemctl is-active postgresql@16-main   # no Amazon Linux 2023: systemctl is-active postgresql
+```powershell
+Get-Service postgresql-x64-16
+Get-Content C:\pafil\pafil_credenciais.txt
 ```
 
-## 3. Aplicar o schema e rodar a carga completa (etapa 7.3)
+## 3. Preparar o Python e aplicar o schema
 
-Prepare o Python dentro da própria instância. A carga completa leva algumas horas,
-já que a API é limitada a cerca de 18 requisições por minuto e existem
-aproximadamente 777 mil registros a carregar. Rodar isso a partir da máquina do
-analista significaria depender do notebook não hibernar durante todo esse tempo.
-Por isso, rode aqui, dentro de uma sessão `tmux`.
+Instale o Python 3.12 (`winget install --id Python.Python.3.12 -e`, ou o
+instalador do python.org) e monte o ambiente virtual:
 
-```bash
-# Ubuntu 24.04 já traz o Python 3.12. No Amazon Linux 2023: sudo dnf install -y python3.11 python3.11-pip
-sudo apt-get install -y python3.12-venv
-python3 -m venv /opt/pafil/venv
-/opt/pafil/venv/bin/pip install -r /opt/pafil/app/requirements.txt
+```powershell
+cd C:\pafil\app
+py -3.12 -m venv .venv
+.\.venv\Scripts\pip install -r requirements.txt
 ```
 
-Crie o arquivo de ambiente fora do repositório, legível apenas pelo serviço:
+Crie o `.env` do projeto (fora do controle de versão, igual ao `.env.example`
+da raiz), com os dados do banco local desta máquina e o token do CVDW:
 
-```bash
-sudo install -d -m 750 /etc/pafil
-sudo tee /etc/pafil/pafil.env >/dev/null <<'EOF'
+```
 CVCRM_SUBDOMINIO=pafil
 CVCRM_EMAIL=<email do token>
 CVCRM_TOKEN=<token>
@@ -133,171 +191,646 @@ PG_HOST=localhost
 PG_PORT=5432
 PG_DB=pafil_dw
 PG_USER=pafil_app
-PG_PASSWORD=<senha de /root/pafil_credenciais.txt>
+PG_PASSWORD=<senha de C:\pafil\pafil_credenciais.txt>
 PG_SSLMODE=disable
 BRONZE_SCHEMA=bronze
-EOF
-sudo chmod 640 /etc/pafil/pafil.env
 ```
 
-> `PG_SSLMODE=disable` é correto aqui, e só aqui: a conexão é feita em `localhost`,
-> sem atravessar nenhuma rede. Qualquer conexão que saia da máquina deve usar
-> `require` em vez disso.
->
-> O formato do arquivo é `CHAVE=valor`, sem a palavra `export` e sem aspas. Isso
-> permite que ele seja lido tanto pelo `EnvironmentFile` do systemd quanto por um
-> simples `set -a; . /etc/pafil/pafil.env`.
+> `PG_SSLMODE=disable` é correto aqui, e só aqui: a conexão é feita em
+> `localhost`, sem atravessar rede nenhuma. Qualquer conexão que saia da
+> máquina (o túnel do analista, seção 8) deve usar `require`.
 
-Agora, rode a carga dentro do `tmux`, para sobreviver a uma eventual queda da
-sessão:
+A carga completa (`--full`) demora horas, porque a API do CVDW é limitada a
+cerca de 18 requisições por minuto e há aproximadamente 777 mil registros.
+Como uma sessão de RDP desconectada (não deslogada) mantém os processos
+vivos, o jeito mais simples é rodar direto, e só desconectar do RDP sem
+deslogar:
 
-```bash
-tmux new -s carga
-set -a; . /etc/pafil/pafil.env; set +a
-cd /opt/pafil/app
-/opt/pafil/venv/bin/python criar_database.py                  # idempotente
-/opt/pafil/venv/bin/python ingestao.py --full --criar-tabelas # leva horas: aplica bronze.sql + faz a carga real
-/opt/pafil/venv/bin/python aplicar_tudo.py                    # roda silver, gold e seeds
-/opt/pafil/venv/bin/python conferir_carga.py                  # valida a origem (API) contra a bronze carregada
+```powershell
+cd C:\pafil\app
+.\.venv\Scripts\python criar_database.py                  # idempotente
+.\.venv\Scripts\python ingestao.py --full --criar-tabelas  # leva horas
+.\.venv\Scripts\python aplicar_tudo.py                     # silver, gold e seeds
+.\.venv\Scripts\python conferir_carga.py                   # valida origem vs bronze
 ```
 
-Use `Ctrl-b d` para desanexar da sessão, e `tmux attach -t carga` para voltar a
-ela depois.
+Se preferir não depender de lembrar de não deslogar, ou se outra pessoa pode
+precisar logar nessa máquina (ver a ressalva de sessão única acima), use uma
+tarefa agendada de disparo único, rodando como `SYSTEM` (mesmo mecanismo da
+seção 5, então sobrevive a qualquer desconexão ou troca de sessão):
 
-**O critério de aceite da etapa 7.3** é o seguinte: `conferir_carga.py` não pode
-apontar nenhuma divergência, e a contagem de reservas precisa ficar acima das
-4.756 da carga local parcial. É justamente essa carga completa que destrava a
-reconciliação de totais (hoje só é possível reconciliar por chave individual).
+```powershell
+schtasks /Create /TN "PafilDW - Carga full (unica)" /RU SYSTEM /RL HIGHEST /SC ONCE /ST 23:59 /F `
+  /TR "cmd /c C:\pafil\app\.venv\Scripts\python.exe C:\pafil\app\ingestao.py --full --criar-tabelas > C:\pafil\logs\carga_full.log 2>&1"
+schtasks /Run /TN "PafilDW - Carga full (unica)"
+```
+
+Acompanhe com `Get-Content C:\pafil\logs\carga_full.log -Wait -Tail 20`, e
+apague a tarefa quando terminar (`schtasks /Delete /TN "PafilDW - Carga full (unica)" /F`).
+
+**O critério de aceite da carga completa:**
+`conferir_carga.py` não pode apontar divergência nenhuma, e a contagem de
+reservas precisa ficar acima das 4.756 da carga local parcial.
 
 ## 4. Seeds de-para: a fronteira que continua manual
 
-O comando `aplicar_tudo.py` popula os seeds a partir de planilhas do SharePoint e
-do OneDrive, que simplesmente não existem em uma EC2 Linux. Dentro da instância,
-os carregadores que dependem de arquivos `.xlsx` ou `.xlsm` não têm o que ler.
+`aplicar_tudo.py` popula os seeds a partir de planilhas
+do SharePoint/OneDrive, que não existem dentro desta máquina. A atualização
+dos de-paras continua rodando da máquina do analista, com o `.env` local
+apontando para cá através do túnel SSH (seção 8, habilitado e testado em
+31/ago/2026).
 
-**Por isso, a atualização dos de-paras continua sendo rodada da máquina do
-analista**, com o `.env` local apontando as variáveis `PG_*` para a EC2, através do
-túnel descrito na seção 7 abaixo:
+**Passo a passo validado (31/ago/2026, carga completa de 25.273 linhas em 16
+seeds):**
 
-```bash
-python popular_seeds.py
+1. Numa janela de terminal dedicada, que precisa ficar aberta durante toda a
+   atualização (é ela que sustenta o túnel), conecta:
+
+   ```powershell
+   ssh -L 5433:localhost:5432 <alias-da-vm>
+   ```
+
+   Não fecha nem desloga essa sessão até terminar.
+
+   **A conexão é por chave, não por senha (ajustado em 09/set/2026).** O par
+   `~/.ssh/pafil_producao` (ed25519, sem passphrase, comentário
+   `tunel-pafil-producao`) já existia no notebook do analista desde
+   24/ago/2026, e agora o `~/.ssh/config` tem a entrada do host, que é o que
+   dispensa o `-i` e o `<usuario-admin>@` na linha acima. Sem essa entrada o `ssh` nem
+   chega a oferecer a chave, porque o nome do arquivo não é um dos padrão
+   (`id_ed25519`, `id_rsa`), e a conexão cai na senha, que não funciona mais.
+
+   **Se um dia der `Permission denied` mesmo com a chave**, roda com `-v` e
+   olha a linha logo depois de `Offering public key`. Se o servidor recusar,
+   a causa quase certa é a pegadinha do OpenSSH no Windows: o usuário da VM é do
+   grupo Administradores, e para membros desse grupo o `sshd` **ignora** o
+   `C:\Users\<usuario-admin>\.ssh\authorized_keys` e lê apenas o
+   `C:\ProgramData\ssh\administrators_authorized_keys`, que ainda por cima
+   precisa de ACL restrita (só Administradores e SYSTEM), senão é descartado
+   em silêncio. Foi exatamente isso em 09/set/2026: a chave existia dos dois
+   lados, mas no arquivo que o `sshd` não lê. Dentro da VM, por RDP:
+
+   ```powershell
+   $pub = "<conteúdo de ~/.ssh/pafil_producao.pub>"
+   $arq = "C:\ProgramData\ssh\administrators_authorized_keys"
+   Add-Content -Path $arq -Value $pub -Encoding ascii
+   icacls $arq /inheritance:r /grant "*S-1-5-32-544:F" /grant "*S-1-5-18:F"
+   Restart-Service sshd
+   ```
+
+   O motivo exato de qualquer recusa fica no Event Viewer da VM, em
+   `Get-WinEvent -LogName "OpenSSH/Operational" -MaxEvents 20`.
+
+2. Aponta a conexão para produção. O jeito mais seguro, e o que passou a ser
+   usado em 09/set/2026, é **não encostar no `.env`**: o
+   `config/settings.py` chama `load_dotenv()`, que por padrão não sobrepõe
+   variável já existente no ambiente, então basta definir as duas na janela
+   de trabalho. Elas valem só ali, somem quando a janela fecha, e não existe
+   passo de restaurar depois nem risco de esquecer o repositório apontado
+   para produção:
+
+   ```powershell
+   $env:PG_USER = "pafil_app"; $env:PG_PASSWORD = "<de C:\pafil\pafil_credenciais.txt>"
+   ```
+
+   O resto do bloco do Postgres do `.env` já serve para o túnel
+   (`localhost`, `5433`, `pafil_dw`, `disable`). Uma pegadinha: tudo tem que
+   rodar **na mesma janela**, porque outro PowerShell não enxerga essas
+   variáveis e cai no `postgres` do `.env`, que é o banco de dev local.
+
+   Se ainda assim preferir editar o arquivo (aí sim copie antes com
+   `Copy-Item .env .env.local.bak`, e restaure no passo 5), o bloco é este.
+   As variáveis `DEPARA_*`/`*_XLSX`/`*_XLSM` continuam como estão, já apontam
+   para o OneDrive do próprio notebook do analista, que é a fonte de
+   verdade das planilhas e não precisa (nem deve) ser tocado:
+
+   ```
+   PG_HOST=localhost
+   PG_PORT=5433
+   PG_USER=pafil_app
+   PG_PASSWORD=<de C:\pafil\pafil_credenciais.txt, lido de dentro da VM>
+   PG_SSLMODE=disable
+   ```
+
+3. Confirma que caiu no banco certo antes de rodar qualquer coisa (o Postgres de dev local,
+   quando está de pé, também pode estar na 5433):
+
+   ```powershell
+   psql -h localhost -p 5433 -U pafil_app -d pafil_dw -c "select current_database(), inet_server_addr()"
+   ```
+
+   Se a conexão funcionar com `pafil_app`, você está do outro lado do túnel.
+
+4. Roda a atualização, sem nenhuma flag, o script já lê os caminhos
+   default do `.env` (inclusive `DEPARA_LEADS_XLSM`). **Não passe
+   `--leads-apoio` com o nome da variável em vez do caminho do arquivo**
+   (ex.: `--leads-apoio LEADS_APOIO`): isso faz o Python procurar um arquivo
+   chamado literalmente `LEADS_APOIO`, que não existe, e o loader vivo de
+   canal/mídia é pulado em silêncio (só um `WARNING` no log), sem quebrar a
+   execução, foi exatamente assim que esse bug passou despercebido da
+   primeira vez.
+
+   ```powershell
+   python popular_seeds.py
+   ```
+
+   Como o `.env` local tem todas as variáveis preenchidas, essa chamada sem
+   flags atualiza os 16 seeds de uma vez, não só canal/mídia. Cada `INSERT`
+   viaja pelo túnel, então é mais lento que local, a carga completa levou
+   cerca de 4 minutos em 31/ago/2026. Silver e gold são views, então o
+   resultado aparece na hora, sem precisar rodar
+   `aplicar_silver.py`/`aplicar_gold.py` depois.
+
+5. Fecha a janela do túnel (`Ctrl+C`). Só restaura o `.env`
+   (`Copy-Item .env.local.bak .env -Force`) se você tiver editado o arquivo
+   em vez de usar as variáveis de ambiente do passo 2.
+
+**Armadilha já encontrada, não repetir (31/ago/2026):** o primeiro caminho
+tentado foi sincronizar o OneDrive de dentro da própria sessão do administrador na
+VM, e não funcionou. O OneDrive dessa sessão, antes de qualquer ajuste, só
+tinha bibliotecas de Financeiro sincronizadas (`C. A PAGAR - TESTE ROBO`,
+`CONCILIAÇÃO`, `CONTABIL`), nada do Comercial. Mesmo depois de confirmar
+que a conta corporativa certa do analista estava logada no OneDrive
+dessa sessão, tentar sincronizar a biblioteca "COMERCIAL - Documentos" pelo
+botão "Sincronizar" do SharePoint falhou com "Não é possível sincronizar...
+tente novamente" (suspeita: política de Conditional Access bloqueando
+sincronização nesta máquina, não investigado a fundo). O túnel SSH evita
+esse problema inteiro, porque as planilhas continuam vindo do OneDrive do
+notebook do analista, onde já funcionam sem fricção, não vale a pena
+insistir em fazer o OneDrive sincronizar dentro da VM.
+
+Isso não é dívida técnica, é uma fronteira real enquanto as planilhas de
+origem forem mantidas à mão pelo backoffice (seção 4 de [`docs/arquitetura.md`](../docs/arquitetura.md)).
+
+## 5. Backup e atualização diária automática
+
+**Esta é a única proteção contra perda de disco.** Não há snapshot automático por
+trás desta máquina. Se o disco falhar (ou a máquina for perdida, roubada,
+reimaginada numa manutenção), **o único jeito de recuperar o banco é um dump
+que tenha sido copiado para fora dela.** `infra/backup_pg.ps1` já grava o
+dump localmente em `C:\pafil\backups`; abra o arquivo e configure pelo menos
+um destino externo antes de considerar o backup real:
+
+- **Mais simples de começar hoje:** preencha `$PastaExterna` no topo do
+  `backup_pg.ps1` com o caminho de uma pasta do OneDrive/SharePoint já
+  sincronizada nesta máquina (o projeto já depende pesado dessas pastas para
+  outras fontes, ver `.env.example`). O script copia o dump para lá depois de
+  gerar.
+- **Mais robusto, mas depende de uma conta AWS da empresa:** preencher a
+  variável `$BucketS3` no topo do script com um bucket S3 e configurar a AWS
+  CLI (`aws configure`) nesta máquina com um usuário IAM de escopo mínimo
+  (`s3:PutObject` só nesse bucket).
+
+Escolha pelo menos um antes de considerar o backup configurado. Um backup
+que só existe no mesmo disco que ele deveria proteger não é backup.
+
+Crie as pastas de log e a variável de ambiente de sistema que dá ao
+`pg_dump`/`ingestao.py` como achar a senha do banco sem ela aparecer em
+nenhum argumento de linha de comando:
+
+```powershell
+New-Item -ItemType Directory -Force -Path C:\pafil\logs, C:\pafil\backups | Out-Null
+
+# Arquivo de senha no formato do libpq (hostname:porta:database:usuario:senha).
+@"
+127.0.0.1:5432:pafil_dw:pafil_app:<senha de pafil_app, de pafil_credenciais.txt>
+"@ | Set-Content -Path C:\pafil\pgpass.conf -Encoding ascii
+icacls C:\pafil\pgpass.conf /inheritance:r /grant:r "*S-1-5-18:(R)" "*S-1-5-32-544:(R,W)" | Out-Null
+
+[Environment]::SetEnvironmentVariable("PGPASSFILE", "C:\pafil\pgpass.conf", "Machine")
 ```
 
-Isso não é uma dívida técnica a ser resolvida: é uma fronteira real, que existe
-enquanto as planilhas de origem continuarem sendo mantidas à mão pelo backoffice
-(veja a seção 4 de `ARCHITECTURE.md` para mais detalhes).
+> `*S-1-5-18` é o SID fixo da conta `SYSTEM` em qualquer instalação Windows
+> (não depende de idioma do sistema operacional), e `*S-1-5-32-544` é o grupo
+> `Administrators`. Usar o SID em vez do nome evita depender de o Windows
+> estar em português ou inglês.
 
-## 5. Atualização diária automática (etapa 7.4)
+Agora registre as duas tarefas, ambas como `SYSTEM` (por isso rodam mesmo com
+ninguém logado):
 
-Crie o usuário de serviço e instale o timer:
+```powershell
+schtasks /Create /TN "PafilDW - Backup diario" /RU SYSTEM /RL HIGHEST /SC DAILY /ST 05:00 /F `
+  /TR "powershell.exe -NoProfile -ExecutionPolicy Bypass -File C:\pafil\app\infra\backup_pg.ps1"
 
-```bash
-sudo useradd --system --home /opt/pafil --shell /usr/sbin/nologin pafil
-sudo chown -R pafil:pafil /opt/pafil
-sudo install -d -o pafil -g pafil /var/log/pafil
-sudo chgrp pafil /etc/pafil/pafil.env
-
-sudo install -m 644 /opt/pafil/app/infra/systemd/pafil-ingestao.{service,timer} /etc/systemd/system/
-sudo systemctl daemon-reload
-sudo systemctl enable --now pafil-ingestao.timer
+schtasks /Create /TN "PafilDW - Ingestao diaria" /RU SYSTEM /RL HIGHEST /SC DAILY /ST 06:00 /RI 60 /DU 0012:01 /F `
+  /TR "cmd /c C:\pafil\app\.venv\Scripts\python.exe C:\pafil\app\ingestao.py --incremental >> C:\pafil\logs\ingestao.log 2>&1"
 ```
 
-Para verificar que funcionou:
+O backup roda
+uma vez por dia, às 05h, e a ingestão roda de hora em hora, das 06h às 18h
+(decisão do analista responsável, 20/ago/2026, pensada pro horário comercial: os dados ficam
+frescos ao longo do dia de trabalho, não só na manhã seguinte). `/RI 60` é o
+intervalo de repetição em minutos, `/DU 0012:01` é por quanto tempo essa
+repetição continua a partir do `/ST` (12h01min cobre até as 18h certinho).
+Sempre horário de Brasília, porque é o fuso configurado no Windows desta
+máquina (confirme com `Get-TimeZone`; se não for `E. South America Standard
+Time`, ajuste com `Set-TimeZone` ou os horários acima vão disparar na hora
+errada).
 
-```bash
-systemctl list-timers pafil-ingestao.timer     # mostra o próximo disparo agendado
-sudo systemctl start pafil-ingestao.service    # dispara a ingestão uma vez, agora
-journalctl -u pafil-ingestao.service -f
+> Uma observação sobre o `--incremental`: desde 09/set/2026, `reservas` é o
+> único objeto marcado com `sempre_full: true` em `config/objetos.yml`, ou
+> seja, ele é recarregado por inteiro em toda execução, mesmo no modo
+> incremental. O motivo está em R26 ([`docs/regras-de-negocio.md`](../docs/regras-de-negocio.md)): o
+> `data_referencia` que a API expõe em `/reservas` acompanha a mudança de
+> situação, não a edição de um campo, então uma correção que o backoffice faz
+> no "Gerente Responsavel" dias depois da venda ficaria fora da janela para
+> sempre. São cerca de 10 páginas (35 segundos), o que cabe folgado na
+> execução de hora em hora. Se um dia a base de reservas crescer a ponto de
+> isso pesar, a alternativa é tirar a marca e passar a rodar
+> `ingestao.py --full --objetos reservas` uma vez por dia.
+
+Para conferir que funcionou:
+
+```powershell
+Get-ScheduledTask -TaskName "PafilDW*" | Select-Object TaskName, State
+schtasks /Run /TN "PafilDW - Ingestao diaria"    # dispara uma vez, agora, fora do horário
+Get-Content C:\pafil\logs\ingestao.log -Tail 30
 ```
 
-> **Por que a ingestão roda aqui, e não no GitHub Actions.** O workflow
-> `ingestao-diaria.yml` foi escrito originalmente supondo que um runner hospedado
-> pelo GitHub se conectaria ao banco através de um `PG_HOST` público, com
-> `sslmode=require`. Isso é incompatível com a regra de nunca expor a porta 5432:
-> os runners do GitHub têm um IP dinâmico dentro de uma faixa pública enorme,
-> então "liberar só o runner" na prática significa liberar meio mundo. Rodando
-> dentro da própria instância, a conexão é feita em `localhost`, e nenhum segredo
-> `PG_*` precisa existir fora da EC2. O workflow do GitHub Actions permanece
-> apenas como um disparo manual de emergência.
+> **Por que a ingestão roda aqui, e não no GitHub Actions.** Mesmo motivo da
+> o `pg_hba.conf` só aceita `127.0.0.1`, então um runner
+> hospedado pelo GitHub, com IP dinâmico numa faixa pública enorme, não
+> conseguiria alcançar o banco sem abrir a porta 5432 para fora, que é
+> exatamente a regra que protege o dado de LGPD. Rodando na própria máquina,
+> a conexão é `localhost`, e nenhum segredo `PG_*` precisa existir fora dela.
+> O workflow `ingestao-diaria.yml` do GitHub Actions continua existindo só
+> como disparo manual de emergência.
 
-## 6. Power BI (etapa 7.5)
+### 5.1 Carga do Blip (atendimento)
 
-Depois que a camada gold já existir, conceda a permissão de leitura:
+Esta é a única carga do projeto em que **atrasar é perder dado de verdade**, e
+vale entender o porquê antes de mexer nela.
 
-```bash
-sudo -u postgres psql -d pafil_dw -f /opt/pafil/app/infra/grants_bi.sql
+A API do Blip só devolve mais ou menos os últimos 35 dias de tickets. Medido em
+09/set/2026: a coleção inteira trazia 1.229 tickets, sendo que o contador
+interno do Blip já estava em 52.411. Os outros 51 mil existiram e foram
+arquivados, e não há endpoint que os traga de volta. Quer dizer que o banco
+passa a ser a fonte de verdade do histórico de atendimento, e não o Blip.
+
+A consequência prática: se esta tarefa ficar parada mais de um mês, o que
+passou nesse período some para sempre. Não existe recuperação depois, diferente
+do CVDW, onde um `--full` sempre reconstrói tudo do zero.
+
+**Por que `--full` e não `--incremental`.** O modo incremental existe para os
+777 mil registros do CVDW. Aqui a coleção inteira cabe em 13 páginas e 15
+segundos, então o incremental só traria o risco de a janela não alcançar um
+ticket atualizado fora dela, sem nenhum ganho de tempo em troca. Para esta
+fonte, `--full` é a escolha simples e mais segura.
+
+Antes de registrar a tarefa, o `.env` da VM precisa do bloco do Blip (o mesmo
+do `.env.example`, seção "Blip"). Basta a chave, porque o identificador do bot
+sai dela:
+
+```
+BLIP_CHAVE=Key <chave composta do bot Router>
 ```
 
-**Atenção a um pré-requisito de plataforma:** o On-premises Data Gateway, da
-Microsoft, só roda em Windows. Se a EC2 for Linux, o gateway simplesmente não pode
-morar nela (veja a seção 4c de `PEDIDO_TI.md`). Existem dois caminhos possíveis:
+A tarefa acompanha o mesmo horário da ingestão do CVDW, de hora em hora das 06h
+às 18h, para o painel ficar fresco ao longo do dia comercial:
 
-- **Sem gateway, funcionando de imediato:** o Power BI Desktop conecta em
-  `localhost:5432` através do túnel descrito na seção 7, usando o usuário
-  `pafil_bi`. A atualização é manual, mas já é suficiente para montar o `.pbix`
-  (etapa 6.5).
-- **Com gateway, permitindo atualização agendada:** instale o gateway em um host
-  Windows sempre ativo, troque o `listen_addresses` para o IP privado da instância
-  dentro de `conf/postgresql-pafil.conf`, descomente a linha do `pg_hba.conf` que
-  contém o CIDR do gateway, e libere a porta 5432 no Security Group referenciando
-  o Security Group de origem, nunca um IP público nem `0.0.0.0/0`. Depois disso,
-  rode `sudo systemctl reload postgresql@16-main`.
-
-## 7. Túnel para acesso local do analista
-
-**Pelo SSM.** Abre a porta 5432 da instância na sua porta 5433 local, a mesma
-porta usada pelo Postgres de desenvolvimento, então o `consultar.ps1` e os
-arquivos `.pbids` continuam funcionando sem nenhuma alteração:
-
-```bash
-aws ssm start-session --target i-XXXXXXXXXXXX --region sa-east-1 --document-name AWS-StartPortForwardingSession --parameters '{"portNumber":["5432"],"localPortNumber":["5433"]}'
+```powershell
+schtasks /Create /TN "PafilDW - Blip diario" /RU SYSTEM /RL HIGHEST /SC DAILY /ST 06:05 /RI 60 /DU 0012:01 /F `
+  /TR "cmd /c C:\pafil\app\.venv\Scripts\python.exe C:\pafil\app\ingerir_blip.py --full >> C:\pafil\logs\blip.log 2>&1"
 ```
 
-**Pelo SSH:**
+O `/ST 06:05` desencontra de propósito dos 06:00 da ingestão do CVDW: as duas
+escrevem no mesmo banco e não há motivo para disputarem conexão no mesmo
+minuto.
 
-```bash
-ssh -i ~/.ssh/pafil-dw.pem -L 5433:localhost:5432 -N ubuntu@<ip>
+**Conferir que está rodando.** As duas fontes dividem a mesma tabela de
+controle, então uma consulta responde pelas duas:
+
+```sql
+SELECT nome_logico, ultima_execucao, ultimo_modo,
+       registros_ultima_carga, status, mensagem
+FROM bronze._ingestao_controle
+WHERE nome_logico LIKE 'blip%'
+ORDER BY ultima_execucao DESC;
 ```
 
-> Cuidado: se o Postgres local de desenvolvimento já estiver de pé na porta 5433,
-> o túnel não vai conseguir subir, porque a porta já está ocupada. Pare o banco
-> local antes, com `%LOCALAPPDATA%\pafil_pg\pg.ps1 stop`, ou use uma porta local
-> diferente. Vale sempre conferir a qual banco você está conectado antes de rodar
-> qualquer carga: `psql -h localhost -p 5433 -c "select inet_server_addr(), current_database()"`.
+O que olhar: `status` igual a `OK` e `ultima_execucao` de hoje. Se a
+`ultima_execucao` estiver com mais de um dia, investigue no mesmo dia, não na
+semana seguinte.
 
-## 8. Operação do dia a dia
+> **Alerta ainda não existe, e aqui ele importa mais do que no reporting.** Hoje
+> a falha fica registrada na tabela de controle e mais nada. Como o dado perdido
+> não volta, um segundo mecanismo que avise quando a `ultima_execucao` do Blip
+> passar de 24 horas deveria entrar antes de qualquer refinamento do dashboard.
+
+### 5.2 Carga da telefonia (MDnet)
+
+O CDR de chamadas (PABX, URA e ramais) vem do painel web da MDnet, que **não tem
+API**. O `ingerir_mdnet.py` entra no painel com usuário e senha e baixa o mesmo CSV
+que o botão de exportar gera, e o `ingerir_mdnet_pernas.py` repete isso filtrando por
+direção, porque o CSV sem filtro mostra uma perna por ligação e esconde as outras. O
+raciocínio completo, e o que se descobriu do painel, está em
+[`sql/silver/README.md`](../sql/silver/README.md) (seção "Telefonia da MDnet") e nos comentários de
+`sql/bronze/mdnet.sql`.
+
+O relatório de URA (menus e opções que a pessoa escolhe antes de falar com alguém) é outra
+tela do mesmo painel, `/app/xml_cdr_ivr/`, e entra pelo `ingerir_mdnet_ura.py`. Ele não tem
+protocolo, então a silver o liga ao CDR por telefone e horário (ver `sql/silver/mdnet_ura.sql`).
+A tarefa abaixo roda as três cargas em sequência.
+
+Antes de registrar a tarefa:
+
+1. O código precisa estar na VM: `git pull` em `C:\pafil\app`, na branch `master`.
+2. O `.env` da VM precisa do bloco `MDNET_*` do `.env.example`:
+
+```
+MDNET_URL=https://pafilconstrutora.ddatelecom.com.br
+MDNET_USUARIO=<usuário do painel>
+MDNET_SENHA=<senha do painel>
+```
+
+   Se a MDnet puder criar um usuário só de leitura para isso, melhor. Se a senha tiver
+   `#` ou espaço, ponha o valor entre aspas duplas.
+3. As tabelas e a view já existem em produção (criadas em 05/out/2026 pelo notebook do
+   analista, com o túnel). Numa instalação nova, rode antes
+   `ingerir_mdnet.py --criar-tabelas --full`, `ingerir_mdnet_pernas.py --full`,
+   `ingerir_mdnet_ura.py --full` e `aplicar_silver.py --so-mdnet`.
+
+A tarefa roda de hora em hora, das 06h às 18h, como as outras, e começa às 06:15 para
+não disputar o banco com a ingestão (06:00) e o Blip (06:05):
+
+```powershell
+schtasks /Create /TN "PafilDW - MDnet diario" /RU SYSTEM /RL HIGHEST /SC DAILY /ST 06:15 /RI 60 /DU 0012:01 /F `
+  /TR "cmd /c powershell.exe -NoProfile -ExecutionPolicy Bypass -File C:\pafil\app\infra\ingerir_mdnet.ps1 >> C:\pafil\logs\mdnet.log 2>&1"
+```
+
+**Por que incremental e não full.** O painel guarda o histórico desde 01/01/2026 (medido
+em 05/out/2026; não sabemos até quando ele retém), então um dia perdido não some de
+imediato, mas o incremental cobre 3 dias para trás e a carga completa leva uns 25
+minutos de pedidos ao painel de um terceiro. Não há motivo para pesar a mão.
+
+**A carga preserva, não sobrescreve.** O painel devolve, para cerca de 0,5% das
+ligações, uma de duas pernas escolhida ao acaso a cada exportação. Sobrescrever faria
+essas linhas oscilarem a cada hora. Para refazer de propósito um período (por exemplo
+depois de acrescentar uma coluna), use `--de AAAA-MM-DD --atualizar`.
+
+**Conferir que está rodando:**
+
+```sql
+SELECT nome_logico, ultima_execucao, ultimo_modo,
+       registros_ultima_carga, status, mensagem
+FROM bronze._ingestao_controle
+WHERE nome_logico LIKE 'mdnet%'
+ORDER BY ultima_execucao DESC;
+```
+
+O que olhar: `status` igual a `OK` e `ultima_execucao` de hoje, para as três linhas
+(`mdnet_cdr`, `mdnet_cdr_pernas` e `mdnet_ura`).
+
+**O que costuma quebrar.** É raspagem de um painel, então o risco é o layout mudar:
+
+- `Login recusado`: usuário ou senha do `.env` não conferem, ou a senha foi trocada.
+- `O painel devolveu HTML em vez de CSV`: a sessão não renovou ou o endpoint de
+  exportação mudou. O erro mostra o começo da página recebida.
+- `O CSV não tem as colunas ...`: o painel mudou o layout do relatório. Ajuste
+  `mdnet/objetos.py` e `sql/bronze/mdnet.sql`.
+
+Em qualquer desses casos, a tabela de controle guarda `status = ERRO` com a mensagem, e
+nada do que já estava gravado é afetado. A saída definitiva é pedir à MDnet o CDR bruto
+ou uma API, que é o que o painel não dá.
+
+## 6. Power BI
+
+Depois que a camada gold já existir (fim da seção 3), conceda a permissão de
+leitura. O `grants_bi.sql` é SQL puro, roda igual em qualquer sistema
+operacional:
+
+```powershell
+& "C:\Program Files\PostgreSQL\16\bin\psql.exe" -U pafil_app -h 127.0.0.1 -d pafil_dw -f C:\pafil\app\infra\grants_bi.sql
+```
+
+Como esta máquina já é Windows, o gateway pode morar nela: instale o **On-premises Data
+Gateway** da Microsoft direto nesta máquina (baixe o instalador oficial na
+página do Power BI, procurando por "On-premises Data Gateway"). Ele fica
+sempre ativo pelo mesmo motivo do Postgres, é serviço do Windows, e conecta
+no banco por `localhost`, sem precisar abrir a porta 5432 para fora da
+própria máquina. Isso destrava a atualização agendada dentro do Power BI
+Service, não só a manual pelo Power BI Desktop.
+
+Se, por qualquer razão, o gateway acabar precisando morar em outra máquina
+Windows da empresa, aí sim é necessário: trocar `listen_addresses` para o IP
+privado desta máquina no `postgresql-pafil-windows.conf`, descomentar a linha
+do `pg_hba.conf` com o CIDR de origem do gateway, e pedir a quem administra a
+rede da empresa para liberar a porta 5432 apenas para o IP daquela máquina,
+nunca de forma ampla. Isso é um pedido de rede, não um passo que se faz de
+dentro desta máquina (ver observação na seção 8).
+
+## 7. Firewall do Windows
+
+Sem nenhuma camada de rede de nuvem por trás desta máquina, **o Firewall do
+Windows é a principal defesa de rede.** Por padrão ele já bloqueia conexões de entrada não solicitadas,
+incluindo a 5432, o que é o comportamento desejado: mesmo que alguém, por
+engano, mude `listen_addresses` para além de `localhost`, o Firewall do
+Windows ainda barra. Confirme que ele está ativo:
+
+```powershell
+Get-NetFirewallProfile | Select-Object Name, Enabled
+```
+
+Só abra a porta explicitamente se o gateway do Power BI acabar morando em
+outra máquina (seção 6), e sempre escopado por IP de origem, nunca "qualquer
+um":
+
+```powershell
+New-NetFirewallRule -DisplayName "PafilDW - Postgres (gateway)" -Direction Inbound `
+  -Protocol TCP -LocalPort 5432 -RemoteAddress <IP do host do gateway> -Action Allow
+```
+
+Vale também confirmar com a TI/rede em que segmento da rede da empresa esta
+máquina está: se ela está no mesmo segmento que estações de trabalho comuns
+(em vez de isolada como um servidor costuma ficar), o Firewall do Windows é
+a única coisa entre o banco (com dado pessoal, LGPD) e qualquer outro
+computador da rede interna. Isso não bloqueia a instalação, mas é
+uma pergunta que vale a pena levar à TI em paralelo.
+
+## 8. Acesso do analista ao banco
+
+Como o acesso a esta máquina é por RDP, o caminho mais direto é **instalar o
+Power BI Desktop dentro da própria máquina** e trabalhar ali, conectando em
+`localhost:5432` sem nenhum túnel. É a opção mais simples e a que exige
+menos coordenação com a TI. A ressalva da sessão única do Windows 10 Pro
+(seção "Como o banco fica sempre ligado") se aplica aqui: se outra pessoa logar nesta
+máquina enquanto você trabalha, sua sessão (e o Power BI Desktop aberto
+nela) é desconectada.
+
+Se preferir continuar usando o Power BI Desktop e o `psql` do seu próprio
+notebook (mais confortável no dia a dia, evita depender desta máquina estar
+disponível para RDP), o recurso opcional **OpenSSH Server** do Windows
+resolve isso .
+
+**Habilitado e testado em 31/ago/2026**, numa sessão elevada (RDP como o
+administrador que a TI passou):
+
+```powershell
+Add-WindowsCapability -Online -Name OpenSSH.Server~~~~0.0.1.0
+Start-Service sshd
+Set-Service -Name sshd -StartupType Automatic
+```
+
+> Se a conexão der `Connection reset` logo depois do handshake (antes até
+> de pedir senha), o serviço `sshd` provavelmente ficou num estado
+> inconsistente do primeiro start, `Restart-Service sshd` resolveu isso na
+> prática. Se persistir, `Get-WinEvent -LogName "OpenSSH/Operational"` ou
+> subir `sshd.exe -d -p 22` manualmente (com o serviço parado) mostra o
+> motivo exato.
+
+A porta 22 foi liberada só para o IP do notebook do analista, nunca de
+forma ampla:
+
+```powershell
+New-NetFirewallRule -DisplayName "SSH-Analista" -Direction Inbound -Protocol TCP -LocalPort 22 -RemoteAddress <IP do notebook> -Action Allow
+```
+
+> O IP do notebook vem de DHCP e pode mudar. Se o túnel parar de conectar
+> um dia sem nenhuma outra mudança, confira primeiro se o IP do notebook
+> ainda é o mesmo que está nessa regra (`Get-NetFirewallRule -DisplayName
+> "SSH-Analista" | Get-NetFirewallAddressFilter`) antes de investigar outra
+> coisa.
+
+Do seu notebook, o túnel fica assim (mesma porta local 5433 usada pelo
+Postgres de desenvolvimento, então `consultar.ps1` e os `.pbids` continuam
+funcionando sem alteração, veja o passo a passo completo de uso na seção
+4):
+
+```powershell
+ssh -L 5433:localhost:5432 <usuario-admin>@<host-da-vm>
+```
+
+> Cuidado: se um Postgres local de desenvolvimento já estiver na porta 5433, o
+> túnel não sobe, porque a porta já está ocupada. Pare o banco local antes, ou
+> use uma porta local diferente no `-L`. Confira sempre a qual banco você está
+> conectado antes de rodar qualquer carga:
+> `psql -h localhost -p 5433 -c "select inet_server_addr(), current_database()"`.
+
+**A porta 5432 nunca é liberada para fora da rede da empresa em nenhum dos
+dois caminhos.** Diferente do que esta seção supunha antes de 31/ago/2026, a
+porta 22 **não** precisou de pedido à TI/rede: como o analista tem
+administrador nesta máquina (seção "Como o banco fica sempre ligado") e o notebook está na
+mesma rede local, roteada até aqui, o `Add-WindowsCapability` e a regra de
+Firewall da seção acima já resolvem tudo de dentro da própria VM, sem
+depender de ninguém além de quem está com a sessão RDP aberta.
+
+### 8.1 RDP de fora da rede da empresa, sem VPN (Tailscale)
+
+Os dois caminhos acima (Power BI Desktop local, ou túnel SSH) pressupõem
+estar na rede da empresa ou já ter uma sessão RDP aberta. Em 21/set/2026,
+surgiu a necessidade de acessar a VM de fora do escritório (sem VPN
+corporativa disponível, e a TI sem previsão de configurar uma). A solução
+usada foi **Tailscale**: uma rede privada (mesh VPN via WireGuard) entre
+dispositivos autorizados, sem expor nenhuma porta pública.
+
+**Por que não usar um túnel público (tipo ngrok) direto na porta de RDP:**
+foi cogitado e descartado. RDP exposto direto na internet é um dos vetores
+de ataque mais comuns (varredura automática, força bruta, exploits
+conhecidos), e esta máquina não tem nenhuma camada de proteção de nuvem por
+trás (ver a ressalva no topo deste arquivo) além do próprio Firewall do
+Windows. O Tailscale resolve o mesmo problema sem esse risco: não abre porta
+nenhuma para a internet, só conecta dispositivos já autenticados na mesma
+conta.
+
+**Importante:** a conta do Tailscale usada é vinculada a um email do domínio
+`@pafil.com.br` (não uma conta pessoal), pelo mesmo motivo registrado
+no projeto `integracao-cvcrm-ghl` sobre a conta do ngrok, essa conta
+vira uma dependência de acesso à VM, e não deveria ficar amarrada a uma
+pessoa só.
+
+**Configuração feita na VM** (precisou de alguém com acesso físico/RDP
+já funcionando, porque instalar algo na VM exige rodar comando nela):
+
+```powershell
+winget install --id Tailscale.Tailscale -e
+tailscale up   # abre um link de login no navegador; usar o email @pafil.com.br
+```
+
+Depois do login, o adaptador de rede do Tailscale entra como "Pública" por
+padrão no Windows, o que bloquearia o RDP. Corrigir (precisa de PowerShell
+**elevado**, "Executar como Administrador", sem isso os dois comandos abaixo
+falham com `PermissionDenied`):
+
+```powershell
+Set-NetConnectionProfile -InterfaceAlias "Tailscale" -NetworkCategory Private
+tailscale ip -4   # anota o IP 100.x.y.z, é o endereço fixo da VM na rede do Tailscale
+```
+
+Confirmado em 21/set/2026: a regra de firewall do RDP nesta máquina já vale
+para qualquer perfil de rede (`Get-NetFirewallPortFilter | Where-Object {
+$_.LocalPort -eq 3389 } | Get-NetFirewallRule` mostra `Profile: Any`), então
+não foi preciso nenhuma regra nova de Firewall para o RDP funcionar pela
+interface do Tailscale.
+
+**Do notebook de fora do escritório:**
+
+1. Instala o Tailscale (tailscale.com/download).
+2. Login com a mesma conta `@pafil.com.br`.
+3. Conecta por RDP no IP do Tailscale da VM: `mstsc /v:100.x.y.z`.
+
+Nenhuma configuração de rede da empresa precisou mudar. O Tailscale funciona
+porque é a **VM** que inicia a conexão de saída até a rede do Tailscale (o
+mesmo princípio do túnel ngrok do projeto de integração), não uma porta de
+entrada aberta.
+
+## 9. Operação do dia a dia
 
 | Situação | Comando |
 |---|---|
-| A ingestão rodou hoje? | `systemctl status pafil-ingestao.service` |
-| Ver o log da última ingestão | `journalctl -u pafil-ingestao.service --since today` |
-| Rodar a ingestão fora do horário programado | `sudo systemctl start pafil-ingestao.service` |
-| O backup rodou? | `tail /var/log/pafil-backup.log` |
-| Fazer um backup manual antes de mexer em algo | `sudo /usr/local/sbin/backup_pg.sh` |
-| Restaurar o banco inteiro | `pg_restore -d pafil_dw -c /var/backups/pafil/<arquivo>.dump` |
-| Restaurar apenas uma tabela | `pg_restore -d pafil_dw -t <tabela> /var/backups/pafil/<arquivo>.dump` |
-| Ver espaço em disco | `df -h /` e `sudo du -sh /var/lib/postgresql /var/backups/pafil` |
-| Ver o tamanho do banco | `sudo -u postgres psql -d pafil_dw -c "\l+ pafil_dw"` |
+| O Postgres está de pé? | `Get-Service postgresql-x64-16` |
+| A ingestão rodou hoje? | `Get-ScheduledTaskInfo -TaskName "PafilDW - Ingestao diaria"` |
+| Ver o log da última ingestão | `Get-Content C:\pafil\logs\ingestao.log -Tail 50` |
+| Rodar a ingestão fora do horário programado | `schtasks /Run /TN "PafilDW - Ingestao diaria"` |
+| O backup rodou (e foi copiado pra fora)? | `Get-ScheduledTaskInfo -TaskName "PafilDW - Backup diario"` |
+| Fazer um backup manual antes de mexer em algo | `.\infra\backup_pg.ps1` (sessão elevada) |
+| Restaurar o banco inteiro | `pg_restore -U pafil_app -h 127.0.0.1 -d pafil_dw -c C:\pafil\backups\<arquivo>.dump` |
+| Restaurar apenas uma tabela | `pg_restore -U pafil_app -h 127.0.0.1 -d pafil_dw -t <tabela> C:\pafil\backups\<arquivo>.dump` |
+| Ver espaço em disco | `Get-Volume` |
+| Ver o tamanho do banco | `psql -U pafil_app -h 127.0.0.1 -d pafil_dw -c "\l+ pafil_dw"` |
+| Atualizar os seeds de-para (canal/mídia e os outros) | **Não roda na VM**, do notebook do analista, com o túnel SSH aberto (`python popular_seeds.py`, passo a passo completo na seção 4) |
+| A carga do Blip rodou hoje? | `Get-ScheduledTaskInfo -TaskName "PafilDW - Blip diario"`, ou a consulta da seção 5.1 |
+| Ver o log da última carga do Blip | `Get-Content C:\pafil\logs\blip.log -Tail 30` |
+| Rodar a carga do Blip fora do horário | `schtasks /Run /TN "PafilDW - Blip diario"` |
+| A carga da MDnet (telefonia) rodou hoje? | `Get-ScheduledTaskInfo -TaskName "PafilDW - MDnet diario"`, ou a consulta da seção 5.2 |
+| Ver o log da última carga da MDnet | `Get-Content C:\pafil\logs\mdnet.log -Tail 40` |
+| Rodar a carga da MDnet fora do horário | `schtasks /Run /TN "PafilDW - MDnet diario"` |
+| O SSH está habilitado nesta máquina? | `Get-Service sshd` |
+| SSH conectou mas deu "Connection reset" logo depois do handshake | `Restart-Service sshd` (sessão elevada), depois tenta o `ssh` de novo |
+| Conferir pra qual IP a porta 22 está liberada | `Get-NetFirewallRule -DisplayName "SSH-Analista" \| Get-NetFirewallAddressFilter` |
 
-## 9. Checklist de aceite da Fase 7
+## 10. Checklist de aceite da instalação
 
-- [ ] Etapa 7.2: Postgres 16 ativo, `pg_hba` restrito a acesso local, senhas
-      geradas na própria máquina, backup diário agendado no cron
-- [ ] Etapa 7.3: `ingestao.py --full` concluída sem erro; `conferir_carga.py`
+- [ ] Postgres 16 ativo como serviço `Automatic`, `pg_hba`
+      restrito a `127.0.0.1`/`::1`, senhas geradas na própria máquina, roles
+      `pafil_app`/`pafil_bi` criados
+- [ ] `random_page_cost` conferido contra o tipo de disco real
+      (SSD mantém 1.1, HDD volta para 4.0)
+- [ ] `ingestao.py --full` concluída sem erro; `conferir_carga.py`
       sem apontar divergências; contagem de reservas acima de 4.756
-- [ ] Etapa 7.3: `aplicar_tudo.py` reconstrói silver e gold no banco novo sem
+- [ ] `aplicar_tudo.py` reconstrói silver e gold no banco novo sem
       erro
-- [ ] Etapa 7.3: reconciliação de totais refeita contra os relatórios legados (a
-      carga parcial só permitia reconciliar por chave)
-- [ ] Etapa 7.4: `pafil-ingestao.timer` habilitado, com disparo confirmado em
-      `list-timers`
-- [ ] Etapa 7.4: um run diário observado de ponta a ponta no `journalctl`
-- [ ] Etapa 7.5: `grants_bi.sql` aplicado; o usuário `pafil_bi` lê a gold e não
-      consegue ler a bronze
-- [ ] Etapa 7.5: Power BI Desktop conectado pelo túnel, usando o usuário
-      `pafil_bi`
-- [ ] Etapa 7.5: a decisão sobre o gateway está registrada, seja com um host
-      Windows já definido, seja adiada de forma consciente
-- [ ] A porta 5432 foi confirmada como inalcançável de fora da VPC
-- [ ] Uma restauração de backup foi testada de verdade (um backup nunca testado
-      não é, na prática, um backup confiável)
+- [ ] reconciliação de totais refeita contra os relatórios legados
+- [ ] as duas tarefas agendadas (`PafilDW - Backup diario` e
+      `PafilDW - Ingestao diaria`) aparecem como `Ready` em
+      `Get-ScheduledTask`, rodando como `SYSTEM`
+- [ ] um run diário observado de ponta a ponta no log
+- [ ] `backup_pg.ps1` configurado com pelo menos um destino FORA
+      desta máquina (pasta sincronizada de OneDrive/SharePoint, ou S3)
+- [ ] `grants_bi.sql` aplicado; o usuário `pafil_bi` lê a gold e
+      não consegue ler a bronze
+- [ ] Power BI conectado (direto na máquina, ou pelo túnel SSH),
+      usando o usuário `pafil_bi`
+- [ ] On-premises Data Gateway instalado nesta mesma máquina, ou
+      a decisão de adiar isso está registrada conscientemente
+- [ ] A porta 5432 foi confirmada como inalcançável de fora da rede da
+      empresa (Firewall do Windows ativo, e confirmado com a TI/rede o que
+      mais protege esta máquina na rede interna)
+- [ ] Testado que o Postgres continua respondendo depois de: fechar o RDP
+      sem deslogar, deslogar de propósito, outra pessoa logar na máquina
+      (sessão única do Windows 10 Pro), e reiniciar a máquina
+- [ ] Uma restauração de backup foi testada de verdade, a partir da cópia
+      que está FORA desta máquina (um backup nunca restaurado, ou que só
+      existe no mesmo disco que protege, não é backup confiável)
+- [ ] Confirmado com a TI se esta máquina é de uso exclusivo do projeto, e
+      se ela está fora do ciclo normal de reimageamento/manutenção de
+      estações de trabalho da empresa

@@ -6,7 +6,7 @@ API com chaves e tipos definidos. Por isso, a silver se concentra em conformar
 nomes, aplicar tipagem forte e calcular flags de regras de negócio, em vez de
 consertar dado sujo.
 
-Ela foi mapeada a partir de [`REGRAS_NEGOCIO.md`](../../REGRAS_NEGOCIO.md),
+Ela foi mapeada a partir de [`docs/regras-de-negocio.md`](../../docs/regras-de-negocio.md),
 seguindo os códigos `ING-*`, `DP-*`, `KPI-*` e `R*` usados naquele catálogo.
 
 ## O que tem nesta pasta
@@ -65,7 +65,7 @@ ligação. O que vale saber antes de usar:
 - A carga **preserva** a primeira versão de cada linha (`--atualizar` sobrescreve):
   o painel oscila em ~0,5% das ligações, devolvendo ao acaso uma das pernas.
 
-Conferência: `python conferir_mdnet.py --de 2026-01-01 --ate 2026-10-05 --silver`.
+Conferência: `python -m ferramentas.conferir_mdnet --de 2026-01-01 --ate 2026-10-05 --silver`.
 
 ### Ramais (`silver.dpara_ramais`)
 
@@ -84,7 +84,7 @@ unidade (SEDE ou HOUSE), setor e responsável. Ela vive na pasta de de-paras, em
 - Os códigos 60xx do menu da URA (6020 de Vendas, por exemplo) **não** são ramais, são filas ou
   grupos, e não estão nessa planilha. O 8270 também não: é número chamado.
 - Para manter: quando entrar gente nova ou um ramal mudar de dono, atualize a planilha, copie
-  para a pasta do de-para e rode `popular_seeds.py --ramais`. O `conferir_mdnet.py --silver`
+  para a pasta do de-para e rode `popular_seeds.py --ramais`. O `ferramentas/conferir_mdnet.py --silver`
   lista os ramais que atenderam e não estão na planilha.
 
 ### Relatório de URA (`silver.mdnet_ura_*`)
@@ -106,7 +106,7 @@ a silver tem três views:
   segundo. `e_menu_atual` é falso para caminhos que o menu atual não explica (do
   menu antigo, mar a mai/2026), então filtre por ele ao medir o funil.
 
-Conferência: `python conferir_mdnet.py --de 2026-01-01 --ate 2026-10-05 --ura`.
+Conferência: `python -m ferramentas.conferir_mdnet --de 2026-01-01 --ate 2026-10-05 --ura`.
 Em set/2026 as 1.012 ligações do menu principal batem com o gráfico do painel e
 todas seguem o menu atual.
 
@@ -149,7 +149,7 @@ Esta validação foi feita contra a bronze já carregada localmente (na porta 54
 1. Popular os seeds `dpara_*` que ainda faltam, extraindo das planilhas do
    SharePoint ou decodificando o JSON guardado em `_bi_ref`.
 2. Construir a gold: o star schema descrito em
-   [`MODELO_SEMANTICO.md`](../../MODELO_SEMANTICO.md), com `fato_reservas`
+   [`docs/modelo-semantico.md`](../../docs/modelo-semantico.md), com `fato_reservas`
    cruzando reservas e distratos, e as dimensões vindas de `unidades`,
    `corretores`, `imobiliarias`, além de uma `dim_calendario`.
 3. Fazer a reconciliação: comparar os KPIs autoritativos (VGV Bruto, VGV

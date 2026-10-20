@@ -23,7 +23,7 @@
 // no seu .pbix antes disso, ela NÃO vai mostrar as colunas novas sozinha: é preciso
 // abrir o Editor do Power Query, marcar as quatro na etapa de seleção de colunas da
 // consulta e só então Atualizar (mesma pegadinha que segurou `documento_chave`/
-// `valor_prestacao` em fato_precadastros, registrada no MODELO_SEMANTICO.md). Sem
+// `valor_prestacao` em fato_precadastros, registrada no docs/modelo-semantico.md). Sem
 // elas, [Meses de Casa] devolve BLANK e o farol cai no plano B, os meses ativos da
 // série de DP-16.
 //

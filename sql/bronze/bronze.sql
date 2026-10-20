@@ -2168,7 +2168,7 @@ CREATE INDEX IF NOT EXISTS ix_campos_adicionais_snapshot_data ON bronze.campos_a
 -- + powerbi/PAGINA_ATENDIMENTO.md sao do Blip/WhatsApp) -- por isso o sufixo
 -- _cvcrm em todas as camadas, para nao colidir com o que ja esta no ar.
 -- Tipos inferidos ao vivo sobre a POPULACAO INTEIRA (10 registros -- ver
--- REGRAS_NEGOCIO.md); alguns campos foram corrigidos a mao para o tipo do
+-- docs/regras-de-negocio.md); alguns campos foram corrigidos a mao para o tipo do
 -- campo homonimo em objetos irmaos, porque a amostra tinha 0 valores
 -- preenchidos ou so digitos sem zero a esquerda (documento_cliente, protocolo,
 -- unidade, cep_cliente -> text; idcorretor, idimobiliaria -> numeric, iguais

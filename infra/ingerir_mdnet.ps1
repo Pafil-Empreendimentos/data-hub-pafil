@@ -6,7 +6,7 @@
 # entao rodar de hora em hora e barato (cerca de 20 pedidos ao painel por execucao) e nao
 # duplica nada.
 #
-# Instalado como Tarefa Agendada, rodando como SYSTEM, por RUNBOOK_WINDOWS.md (secao 5.2).
+# Instalado como Tarefa Agendada, rodando como SYSTEM, por README.md (secao 5.2).
 # O .env da maquina precisa do bloco MDNET_* (usuario e senha do painel da MDnet).
 #
 # As cargas rodam mesmo se uma falhar, porque sao independentes. O codigo de saida e o

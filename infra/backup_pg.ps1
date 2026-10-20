@@ -1,10 +1,10 @@
 # backup_pg.ps1 -- dump logico diario do Pafil DW, com retencao (Windows).
 #
 # Instalado como uma Tarefa Agendada (rodando como SYSTEM) por
-# RUNBOOK_WINDOWS.md, as 02:30 (America/Sao_Paulo), antes da ingestao diaria
+# README.md, as 02:30 (America/Sao_Paulo), antes da ingestao diaria
 # das 03:00. Rodar como SYSTEM e o que garante que ela dispara mesmo sem
 # ninguem logado na instancia -- e o equivalente Windows do cron.d da versao
-# Linux (infra/backup_pg.sh).
+# Linux (versão removida do repositório, ver o histórico do git).
 #
 # Esta maquina NAO e uma instancia EC2 (confirmado em 20/ago/2026, ver a
 # memoria "hospedagem-producao"): e fisica ou local, sem EBS e sem snapshot
@@ -18,7 +18,7 @@
 # "ingestao.py --full", mas os SEEDS DE-PARA NAO SAO -- vem de planilhas
 # mantidas a mao pelo backoffice. Se este backup falhar, e isso que se perde.
 #
-# Autenticacao: le a senha de $env:PGPASSFILE (ver RUNBOOK_WINDOWS.md, secao
+# Autenticacao: le a senha de $env:PGPASSFILE (ver README.md, secao
 # 6, para como criar o arquivo e a variavel de ambiente de sistema). Sem isso,
 # o pg_dump abaixo trava esperando senha interativa -- e como e a SYSTEM que
 # roda, ninguem ve o prompt, so falha silenciosamente.

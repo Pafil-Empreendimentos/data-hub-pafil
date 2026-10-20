@@ -1,11 +1,9 @@
 # Pedido de infraestrutura: acesso automatizado ao SharePoint (Microsoft Graph API)
 
-> **Como usar este documento:** é um material de apoio para uma conversa com a TI,
-> no mesmo formato do pedido anterior ([`PEDIDO_TI.md`](PEDIDO_TI.md), sobre o
-> servidor de banco de dados). Traz o contexto, o que está sendo pedido e as
-> decisões que dependem da TI para avançar. Este pedido é independente do anterior
-> e não bloqueia nem depende dele: pode ser levado à TI a qualquer momento, mesmo
-> em paralelo a outras frentes do projeto.
+> **Como usar este documento:** é um material de apoio para uma conversa com a TI. Traz
+> o contexto, o que está sendo pedido e as decisões que dependem da TI para avançar. O pedido
+> não bloqueia nem depende de outras frentes do projeto e pode ser levado à TI a qualquer
+> momento.
 
 ## 1. O contexto, em um parágrafo
 
@@ -75,8 +73,8 @@ de um site, o mesmo processo se repete para cada um.
 **(b) Client Secret ou certificado.** Se a TI já usa certificados para outras
 integrações, essa é a opção mais robusta. Caso contrário, um Client Secret com
 prazo definido (recomendo 12 meses) resolve, desde que a rotação fique agendada
-desde já, no mesmo espírito da política de rotação do token do CVCRM (`SKILL.md`,
-seção 7.2): trocar o secret por rotina, ou imediatamente se ele circular fora do
+desde já, no mesmo espírito da política de rotação do token do CVCRM ([`decisoes.md`](decisoes.md),
+seção 3): trocar o secret por rotina, ou imediatamente se ele circular fora do
 lugar onde deveria estar guardado.
 
 **(c) Quem concede o "admin consent".** Esse clique só pode ser feito por um

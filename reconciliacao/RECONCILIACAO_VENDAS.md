@@ -1,8 +1,8 @@
 # Reconciliação de vendas: pipeline nova contra a Vendas Consolidadas (legado)
 
-**Atenção:** este documento contém valores reais de VGV e vendas da empresa. O
-repositório é privado; não redistribua esse conteúdo fora dele (veja a seção 7 de
-`SKILL.md`).
+**Atenção:** este documento contém valores reais de VGV e vendas da empresa. Mantenha
+o repositório privado e não redistribua esse conteúdo (veja a seção 3 de
+`docs/decisoes.md`).
 
 Esta comparação coloca lado a lado a pipeline nova (dados vindos da API, através
 de `silver.reservas`) e a planilha de fechamento manual `Vendas Consolidadas.xlsm`
@@ -10,7 +10,7 @@ de `silver.reservas`) e a planilha de fechamento manual `Vendas Consolidadas.xls
 a Proposta, que corresponde ao `idreserva`.
 
 **Atenção: o bronze local hoje é parcial.** A carga completa só vai acontecer na
-instância EC2 de produção. Por isso, a comparação honesta aqui é feita por
+máquina de produção. Por isso, a comparação honesta aqui é feita por
 proposta, dentro da interseção entre as duas fontes, e não pelo total geral.
 
 ## A interseção por proposta
