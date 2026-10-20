@@ -1,13 +1,13 @@
-# consultar.ps1 — abre o psql no banco local lendo as credenciais do .env.
+# consultar.ps1: abre o psql no banco apontado pelo .env (PG_*), na raiz do repositorio.
 #
 # Uso:
-#   .\consultar.ps1                      # abre sessão psql interativa
-#   .\consultar.ps1 -c "SELECT 1"        # roda um comando e sai
-#   .\consultar.ps1 -f script.sql        # roda um arquivo .sql
-#   .\consultar.ps1 -c "\dt silver.*"    # qualquer flag do psql é repassada
+#   .\ferramentas\consultar.ps1                      # abre sessão psql interativa
+#   .\ferramentas\consultar.ps1 -c "SELECT 1"        # roda um comando e sai
+#   .\ferramentas\consultar.ps1 -f script.sql        # roda um arquivo .sql
+#   .\ferramentas\consultar.ps1 -c "\dt silver.*"    # qualquer flag do psql é repassada
 $ErrorActionPreference = "Stop"
 
-$envFile = Join-Path $PSScriptRoot ".env"
+$envFile = Join-Path (Split-Path -Parent $PSScriptRoot) ".env"
 $cfg = @{}
 Get-Content $envFile | Where-Object { $_ -match '^\s*PG_' } | ForEach-Object {
     $parts = $_ -split '=', 2

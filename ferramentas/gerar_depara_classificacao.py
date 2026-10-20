@@ -11,7 +11,7 @@ Precedencia quando a mesma proposta aparece em varias abas:
   linha mais COMPLETA vence (mais colunas preenchidas); empate -> aba mais recente.
 
 Uso:
-  python gerar_depara_classificacao.py [--xlsm <caminho>] [--saida <arquivo.xlsx>]
+  python -m ferramentas.gerar_depara_classificacao [--xlsm <caminho>] [--saida <arquivo.xlsx>]
   (sem --xlsm usa VENDAS_CONSOLIDADAS_XLSM do .env)
 """
 from __future__ import annotations

@@ -2,7 +2,7 @@
 proposta (=idreserva): VGV no overlap e drift de status. Requer openpyxl (só p/ ler o .xlsm).
 Gera reconciliacao/RECONCILIACAO_VENDAS.md.
 
-  python reconciliar_vendas.py --xlsm "<Vendas Consolidadas.xlsm>"
+  python -m ferramentas.reconciliar_vendas --xlsm "<Vendas Consolidadas.xlsm>"
 """
 from __future__ import annotations
 
@@ -82,7 +82,7 @@ def montar_relatorio(legado: dict[int, dict], pipe: dict[int, dict]) -> str:
     L.append("Pipeline nova (API → `silver.reservas`) vs. planilha de fechamento manual "
              "`Vendas Consolidadas.xlsm` (depois consumida pelo PBI). Chave: Proposta = idreserva.")
     L.append("")
-    L.append("> ⚠️ **Bronze local é parcial** — o run completo vai para a VPS. Por isso a comparação "
+    L.append("> ⚠️ **Bronze local é parcial** — a carga completa está na máquina de produção. Por isso a comparação "
              "honesta é **por proposta no overlap**, não o total geral.")
     L.append("")
     L.append("## Overlap por proposta")

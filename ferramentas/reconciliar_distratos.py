@@ -1,7 +1,7 @@
 """Reconcilia distratos da pipeline (silver.distratos) vs. o CSV legado (rel_distratos)
 de um mês — contagem, VGV e diferença por reserva. Gera reconciliacao/RECONCILIACAO_DISTRATOS_<mes>.md.
 
-  python reconciliar_distratos.py --csv "<rel_distratos.csv>" --mes 2026-05
+  python -m ferramentas.reconciliar_distratos --csv "<rel_distratos.csv>" --mes 2026-05
 """
 from __future__ import annotations
 

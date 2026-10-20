@@ -1,6 +1,6 @@
 """Conferência da bronze.mdnet_cdr contra os totais do painel da MDnet. Só leitura.
 
-  python conferir_mdnet.py [--de 2026-09-01] [--ate 2026-10-01]
+  python -m ferramentas.conferir_mdnet [--de 2026-09-01] [--ate 2026-10-01]
 
 Imprime a cobertura da tabela, o total por mês e, para o período pedido, a divisão
 por direção e estado, que é a mesma que o painel mostra nos cartões do relatório de

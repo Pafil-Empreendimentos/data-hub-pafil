@@ -6,8 +6,8 @@ Para cada de-para do config/deparas.yml cria:
         caminho/   -> caminho.md documentando origem, tabela silver, como atualizar
 
 Uso:
-  python montar_estrutura_depara.py            # monta tudo (DEPARA_DIR do .env)
-  python montar_estrutura_depara.py --destino <pasta>
+  python -m ferramentas.montar_estrutura_depara            # monta tudo (DEPARA_DIR do .env)
+  python -m ferramentas.montar_estrutura_depara --destino <pasta>
 """
 from __future__ import annotations
 
@@ -63,10 +63,10 @@ def doc_caminho(pasta: Path, d: dict, base: Path, status: str, fonte_txt: str) -
     if d["tipo"] == "arquivo":
         linhas.append("Substituir o arquivo em `arquivo/` pela versão nova da fonte acima (o dono do processo mantém a fonte no SharePoint).")
     elif d["tipo"] == "silver":
-        linhas.append(f"Rodar `montar_estrutura_depara.py` — re-exporta `silver.{d['silver']}` para `arquivo/`. "
+        linhas.append(f"Rodar `python -m ferramentas.montar_estrutura_depara` — re-exporta `silver.{d['silver']}` para `arquivo/`. "
                       "O conteúdo hoje vive embutido no pipeline (JSON/seed); este xlsx é a cópia legível/versionada.")
     elif d["tipo"] == "gerado":
-        linhas.append("Rodar `gerar_depara_classificacao.py` (lê a Vendas Consolidadas) e depois `montar_estrutura_depara.py`.")
+        linhas.append("Rodar `python -m ferramentas.gerar_depara_classificacao` (lê a Vendas Consolidadas) e depois `python -m ferramentas.montar_estrutura_depara`.")
     else:
         linhas.append("**Pendente:** falta a fonte. Ver descrição — precisa do xlsx do SharePoint / carga.")
     md.write_text("\n".join(linhas) + "\n", encoding="utf-8")
@@ -116,7 +116,7 @@ def main() -> int:
                 elif src.exists():
                     status = "ja no lugar"
                 else:
-                    status = "FALTA GERAR (rodar gerar_depara_classificacao.py)"
+                    status = "FALTA GERAR (rodar ferramentas/gerar_depara_classificacao.py)"
             else:
                 fonte_txt = "pendente (SharePoint / carga)"
                 status = "pendente"

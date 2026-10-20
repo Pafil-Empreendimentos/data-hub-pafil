@@ -1,7 +1,7 @@
 """Gera um Excel de documentação dos de-paras a partir do config/deparas.yml.
 Escreve <DEPARA_DIR>/de_paras_documentacao.xlsx (README da pasta de de-paras).
 
-  python gerar_doc_deparas.py
+  python -m ferramentas.gerar_doc_deparas
 """
 from __future__ import annotations
 
@@ -47,8 +47,8 @@ COR = {"Ativo": "D8EAD3", "A usar": "FCE9C8", "Pendente": "F8D0CE", "Legado": "E
 def como_atualizar(tipo: str) -> str:
     return {
         "arquivo":  "substituir o .xlsx pela versão nova da fonte (SharePoint)",
-        "silver":   "rodar montar_estrutura_depara.py (re-exporta do silver)",
-        "gerado":   "rodar gerar_depara_classificacao.py + montar_estrutura_depara.py",
+        "silver":   "rodar ferramentas/montar_estrutura_depara.py (re-exporta do silver)",
+        "gerado":   "rodar ferramentas/gerar_depara_classificacao.py + ferramentas/montar_estrutura_depara.py",
         "pendente": "falta a fonte (xlsx do SharePoint / carga)",
     }.get(tipo, "")
 
