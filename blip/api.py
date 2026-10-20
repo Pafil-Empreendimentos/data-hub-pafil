@@ -279,10 +279,19 @@ class ClienteBlip:
         **Não use o campo `total` do envelope para parar.** Apesar do nome, ele
         não é o tamanho da coleção: é a contagem de itens da página. Medido
         contra a API em 09/set/2026, `total` devolveu 1, 5 e 100 para `$take`
-        de 1, 5 e 100, na mesma coleção de ~52 mil tickets. Uma parada por
-        `lidos >= total` dispara já na primeira página e a carga fica
-        silenciosamente truncada nos 100 registros mais recentes, sem erro
-        nenhum. Foi exatamente o que aconteceu na primeira descoberta.
+        de 1, 5 e 100. Uma parada por `lidos >= total` dispara já na primeira
+        página e a carga fica silenciosamente truncada nos 100 registros mais
+        recentes, sem erro nenhum. Foi exatamente o que aconteceu na primeira
+        descoberta.
+
+        **Sobre o tamanho da coleção:** medido em 10/set/2026, `/tickets` inteira
+        tem ~1.200 registros, e o `$skip=1207` já volta vazio. A carga completa
+        são treze páginas, não centenas. O número de ~52 mil que estava escrito
+        aqui antes era engano: os `sequentialId` dos tickets atuais estão na casa
+        dos 51 mil, e esse contador foi lido como se fosse a contagem. O Blip
+        retém cerca de cinco semanas de tickets nesta API (o mais antigo era de
+        04/08/2026), o que faz da nossa bronze a única memória de longo prazo
+        desse dado. Ver reconciliacao/blip_painel_vs_dashboard.md.
         """
         take = take or self._cfg.take
         skip = 0

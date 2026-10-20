@@ -24,7 +24,7 @@ deparas:
     silver: dpara_corretor_headcount
     tipo: arquivo
     fonte_rel: "HeadCount/Base Corretores Pafil 22-23.xlsx"
-    descricao: "Fonte AUTORITATIVA da equipe do corretor (Nome -> Gerente/Supervisor), planilha manual do backoffice (aba 'Base Pafil', so Ativos). Substitui a derivacao via CVDW/reserva como fonte primaria de equipe em gold.dim_corretor (21/jul/2026)."
+    descricao: "Fonte AUTORITATIVA da equipe do corretor (Nome -> Gerente/Supervisor), planilha manual do backoffice (aba 'Base Pafil', quadro inteiro com a flag eh_ativo desde 10/set/2026, mais Dt contratacao/Dt desligamento). Substitui a derivacao via CVDW/reserva como fonte primaria de equipe em gold.dim_corretor (21/jul/2026)."
 
   - nome: empreendimentos
     silver: dpara_empreendimento_regional

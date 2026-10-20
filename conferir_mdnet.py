@@ -46,6 +46,8 @@ def main() -> int:
                         help="Mostra cortes extras para investigar divergência de classificação.")
     parser.add_argument("--ura", action="store_true",
                         help="Confere o relatório de URA (bronze.mdnet_ura e as views silver da URA).")
+    parser.add_argument("--gold", action="store_true",
+                        help="Confere gold.fato_chamadas e gold.dim_ramal (a base da página Telefonia).")
     args = parser.parse_args()
 
     cfg = carregar_config_pg()
@@ -98,6 +100,8 @@ def main() -> int:
             _silver(conn, inicio, fim)
         if args.ura:
             _ura(conn, args.de, args.ate)
+        if args.gold:
+            _gold(conn, args.de, args.ate)
     return 0
 
 
@@ -366,6 +370,125 @@ def _ura(conn: Any, de: date, ate: date) -> None:
     ).fetchone()
     print(f"\n  Ligações da URA achadas no CDR: {casadas} de {principais} "
           f"(em set/2026 devem ser 1.012 de 1.012, contando o número oculto)")
+
+
+def _gold(conn: Any, de: date, ate: date) -> None:
+    """Confere a gold da telefonia: a fato fecha com a silver, a dimensão não deixa ramal órfão,
+    e o ruído marca só ligação não atendida."""
+    periodo = (de, ate)
+    (fato, silver, ids, nulos) = conn.execute(
+        "SELECT (SELECT count(*) FROM gold.fato_chamadas), "
+        "(SELECT count(*) FROM silver.mdnet_chamadas WHERE e_chamada_real), "
+        "(SELECT count(DISTINCT chamada_id) FROM gold.fato_chamadas), "
+        "(SELECT count(*) FROM gold.fato_chamadas WHERE e_ruido IS NULL)"
+    ).fetchone()
+    print()
+    print(f"gold.fato_chamadas: {fato} linha(s) | silver com e_chamada_real: {silver} | "
+          f"chamada_id únicos: {ids} | e_ruido nulo: {nulos}")
+    print("  (a fato deve ter o mesmo número de linhas da silver real, ids únicos = linhas, e_ruido nulo = 0)")
+
+    (orfaos, ramais, fora) = conn.execute(
+        "SELECT (SELECT count(*) FROM gold.fato_chamadas f LEFT JOIN gold.dim_ramal d USING (ramal) "
+        "WHERE f.ramal IS NOT NULL AND d.ramal IS NULL), "
+        "(SELECT count(*) FROM gold.dim_ramal), "
+        "(SELECT count(*) FROM gold.dim_ramal WHERE NOT cadastrado_na_planilha)"
+    ).fetchone()
+    print(f"gold.dim_ramal: {ramais} ramal(is), {fora} fora da planilha | ramais da fato sem linha na "
+          f"dimensão (deve ser 0): {orfaos}")
+
+    # As duas views (silver e gold) são pesadas: ler cada uma UMA vez, para tabelas temporárias.
+    conn.execute(
+        "CREATE TEMP TABLE _cartao AS SELECT direcao_cartao, estado_cartao, origem "
+        "FROM silver.mdnet_chamadas WHERE data_hora_inicio::date BETWEEN %s AND %s", periodo,
+    )
+    conn.execute(
+        "CREATE TEMP TABLE _fato AS SELECT direcao, atendida "
+        "FROM gold.fato_chamadas WHERE data BETWEEN %s AND %s", periodo,
+    )
+
+    def _linha_cartao(rotulo: str, direcao: str, obs: str) -> tuple:
+        t, a, n = conn.execute(
+            "SELECT count(*), count(*) FILTER (WHERE estado_cartao = 'Atendida'), "
+            "count(*) FILTER (WHERE estado_cartao <> 'Atendida') FROM _cartao WHERE direcao_cartao = %s",
+            (direcao,),
+        ).fetchone()
+        return (rotulo, t, a, n, obs)
+
+    def _linha_fato(rotulo: str, direcao: str, obs: str) -> tuple:
+        t, a, n = conn.execute(
+            "SELECT count(*), count(*) FILTER (WHERE atendida), count(*) FILTER (WHERE NOT atendida) "
+            "FROM _fato WHERE direcao = %s", (direcao,),
+        ).fetchone()
+        return (rotulo, t, a, n, obs)
+
+    (total_linhas,) = conn.execute("SELECT count(*) FROM _cartao").fetchone()
+    (capilaridade,) = conn.execute(
+        "SELECT count(DISTINCT origem) FROM _cartao WHERE direcao_cartao = 'Entrada'"
+    ).fetchone()
+    _tabela(
+        "Cartões do painel web x gold (digite no painel o MESMO período e compare, de preferência logo "
+        "depois de uma carga)",
+        ("cartão do painel", "total", "atendidas", "não atendidas", "observação"),
+        [
+            ("Chamadas totais", total_linhas, "", "", "todas as linhas, inclui recurso e perna de transferência"),
+            _linha_cartao("Entrada (regra do painel)", "Entrada", "é o cartão TOTAL ENTRADA"),
+            _linha_fato("Entrada (fato da gold)", "Entrada", "tem que ser igual à linha de cima"),
+            ("Capilaridade da entrada (origens)", capilaridade, "", "",
+             "a gold conta cerca de 1 por cento a menos (agrupa variantes do mesmo número)"),
+            _linha_cartao("Saída (regra do painel)", "Saída", "atendidas NÃO fecham com o painel (512 x 251)"),
+            _linha_fato("Saída (fato da gold)", "Saída", "a fato tira o que não é ligação real"),
+            _linha_cartao("Interna (regra do painel)", "Interna", "inclui recurso do PABX e perna de transferência"),
+            _linha_fato("Interna (fato da gold)", "Interna", "só interna real, sem recurso nem transferência"),
+        ],
+    )
+
+    _tabela(
+        "Entrada por mês: bruta e sem ruído (a bruta fecha com o painel web)",
+        ("mês", "entradas", "atendidas", "% bruto", "ruído", "% sem ruído"),
+        conn.execute(
+            "SELECT to_char(date_trunc('month', data_hora_inicio), 'YYYY-MM'), count(*), "
+            "count(*) FILTER (WHERE atendida), "
+            "round(100.0 * count(*) FILTER (WHERE atendida) / count(*), 1), "
+            "count(*) FILTER (WHERE e_ruido), "
+            "round(100.0 * count(*) FILTER (WHERE atendida) "
+            "/ nullif(count(*) FILTER (WHERE NOT e_ruido), 0), 1) "
+            "FROM gold.fato_chamadas WHERE direcao = 'Entrada' AND data >= %s AND data <= %s "
+            "GROUP BY 1 ORDER BY 1", periodo,
+        ).fetchall(),
+    )
+
+    _tabela(
+        "Ruído por motivo (nenhuma atendida pode estar aqui)",
+        ("motivo", "ligações", "atendidas"),
+        conn.execute(
+            "SELECT coalesce(motivo_ruido, '(não é ruído)'), count(*), count(*) FILTER (WHERE atendida) "
+            "FROM gold.fato_chamadas WHERE direcao = 'Entrada' AND data >= %s AND data <= %s "
+            "GROUP BY 1 ORDER BY 2 DESC", periodo,
+        ).fetchall(),
+    )
+
+    _tabela(
+        "Entradas atendidas por unidade e setor (janeiro/2026 quase não tem ramal, use --de 2026-02-01)",
+        ("unidade", "setor", "atendidas"),
+        conn.execute(
+            "SELECT coalesce(d.unidade, '(sem ramal)'), coalesce(d.setor_grupo, '(sem ramal)'), count(*) "
+            "FROM gold.fato_chamadas f LEFT JOIN gold.dim_ramal d USING (ramal) "
+            "WHERE f.direcao = 'Entrada' AND f.atendida AND f.data >= %s AND f.data <= %s "
+            "GROUP BY 1, 2 ORDER BY 3 DESC LIMIT 20", periodo,
+        ).fetchall(),
+    )
+
+    _tabela(
+        "Atendidas sem ramal, por mês (janeiro/2026 chega a 92%; de fevereiro em diante deve ser baixo)",
+        ("mês", "atendidas", "sem ramal", "% sem ramal"),
+        conn.execute(
+            "SELECT to_char(date_trunc('month', data), 'YYYY-MM'), count(*), "
+            "count(*) FILTER (WHERE ramal IS NULL), "
+            "round(100.0 * count(*) FILTER (WHERE ramal IS NULL) / count(*), 0) "
+            "FROM gold.fato_chamadas WHERE direcao = 'Entrada' AND atendida "
+            "AND data >= %s AND data <= %s GROUP BY 1 ORDER BY 1", periodo,
+        ).fetchall(),
+    )
 
 
 if __name__ == "__main__":

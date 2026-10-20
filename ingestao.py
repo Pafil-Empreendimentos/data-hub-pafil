@@ -116,9 +116,13 @@ def ingerir_objeto(
     colunas_insert = _colunas_insert(colunas_fonte, tem_dados_brutos)
 
     # Data de referência (modo incremental).
-    a_partir = _data_referencia_incremental(conn, cfg_api, schema, tabela, modo)
-    if modo == "incremental" and a_partir:
-        log.info("[%s] incremental a_partir_data_referencia=%s", tabela, a_partir)
+    a_partir = _data_referencia_incremental(conn, cfg_api, schema, obj, modo)
+    if modo == "incremental":
+        if obj.sempre_full:
+            log.info("[%s] sempre_full=true — recarga completa dentro do incremental",
+                     tabela)
+        elif a_partir:
+            log.info("[%s] incremental a_partir_data_referencia=%s", tabela, a_partir)
 
     data_extracao = datetime.now(timezone.utc)
     total = 0
@@ -156,12 +160,18 @@ def _data_referencia_incremental(
     conn: psycopg.Connection,
     cfg_api: ConfigAPI,
     schema: str,
-    tabela: str,
+    obj: Objeto,
     modo: str,
 ) -> str | None:
     """Calcula o valor de a_partir_data_referencia para o modo incremental."""
     if modo != "incremental":
         return None
+    if obj.sempre_full:
+        # O `data_referencia` deste objeto não acompanha edição de campo solto
+        # (ver config/objetos.yml e R26): qualquer janela deixaria de fora a
+        # linha corrigida depois da última movimentação. Lê tudo, sempre.
+        return None
+    tabela = obj.nome_logico
     ultima = db.ler_data_referencia(conn, schema, tabela)
     if not ultima:
         log.info("[%s] sem marca anterior — fazendo carga completa neste objeto", tabela)

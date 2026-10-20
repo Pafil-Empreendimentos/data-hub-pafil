@@ -11,6 +11,7 @@ import json
 import os
 import re
 import zlib
+from datetime import date, datetime
 from pathlib import Path
 
 from config.settings import RAIZ, carregar_config_pg
@@ -814,9 +815,20 @@ def carregar_gerentes(conn, xlsx: Path) -> int:
 def carregar_headcount_corretores(conn, xlsx: Path) -> int:
     """Carrega silver.dpara_corretor_headcount da planilha manual do backoffice
     (Base Corretores Pafil, aba "Base Pafil") — fonte autoritativa de Gerente/
-    Supervisor por corretor. Só carrega os corretores com "Ativo/Inativo" = Ativo
-    (o pedido do dev: "usar o nome do corretor como chave, referenciando corretores
-    ativos da tabela de headcount" — o resto da planilha é histórico de desligados).
+    Supervisor por corretor.
+
+    Carrega o QUADRO INTEIRO, ativos e desligados, com a flag `eh_ativo`. Até
+    10/set/2026 carregava só os Ativos, e isso furava a página Performance: as linhas
+    da matriz vêm dessa dimensão, então corretor desligado no meio do ano perdia a
+    linha enquanto as vendas dele continuavam na fato, caindo na linha em branco do
+    relacionamento. Quem quer só o time corrente filtra por `eh_ativo`.
+
+    Traz também "Dt contratação" e "Dt desligamento" (data de entrada e de saída),
+    que são o insumo do farol da página Performance. Quando o mesmo nome aparece em
+    mais de uma linha, vale o vínculo ATIVO e, entre vínculos do mesmo status, o de
+    contratação mais recente: é o que diz há quanto tempo a pessoa está na casa hoje.
+    O histórico de todos os vínculos fica no DP-16 (dpara_corretor_headcount_mensal),
+    que despivota linha a linha.
     """
     import openpyxl
     from psycopg import sql
@@ -829,33 +841,181 @@ def carregar_headcount_corretores(conn, xlsx: Path) -> int:
     j_house, j_nome, j_apelido = hdr.index("House"), hdr.index("Nome"), hdr.index("Apelido")
     j_imob, j_ger, j_sup = hdr.index("Imobiliaria"), hdr.index("Gerente"), hdr.index("Supervisor")
     j_ativo = hdr.index("Ativo/Inativo")
+    j_contrat, j_deslig = hdr.index("Dt contratação"), hdr.index("Dt desligamento")
 
-    regs, vistos = [], set()
+    def _data(v) -> date | None:
+        if isinstance(v, datetime):
+            return v.date()
+        return v if isinstance(v, date) else None
+
+    # Célula de texto com data dentro é erro de digitação da planilha — em 09/2026 há
+    # 3 apelidos preenchidos com data. Vira nulo, em vez de gravar "2025-03-06 00:00:00"
+    # como apelido no banco. Só apareceu quando o loader passou a ler o quadro inteiro:
+    # nas linhas de quem está ativo, essas colunas estão limpas.
+    trocados: list[str] = []
+
+    def _texto(v, nome: str = "", col: str = "") -> str | None:
+        if v is None:
+            return None
+        if isinstance(v, (date, datetime)):
+            trocados.append(f"{nome} ({col})")
+            return None
+        return str(v).strip() or None
+
+    por_nome: dict[str, tuple] = {}
     for r in linhas[hdr_idx + 1:]:
         nome = (r[j_nome] or "").strip() if r[j_nome] else ""
-        ativo = (r[j_ativo] or "").strip().lower() if r[j_ativo] else ""
-        if not nome or ativo != "ativo" or nome.lower() in vistos:
+        if not nome:
             continue
-        vistos.add(nome.lower())
-        regs.append((
+        eh_ativo = ((r[j_ativo] or "").strip().lower() == "ativo") if r[j_ativo] else False
+        contrat, deslig = _data(r[j_contrat]), _data(r[j_deslig])
+        reg = (
             nome,
-            (r[j_apelido] or "").strip() if r[j_apelido] else None,
-            (r[j_imob] or "").strip() if r[j_imob] else None,
-            (r[j_house] or "").strip() if r[j_house] else None,
-            (r[j_ger] or "").strip() if r[j_ger] else None,
-            (r[j_sup] or "").strip() if r[j_sup] else None,
-        ))
+            _texto(r[j_apelido], nome, "Apelido"),
+            _texto(r[j_imob], nome, "Imobiliaria"),
+            _texto(r[j_house], nome, "House"),
+            _texto(r[j_ger], nome, "Gerente"),
+            _texto(r[j_sup], nome, "Supervisor"),
+            eh_ativo,
+            contrat,
+            deslig,
+        )
+        # nome repetido (recontratação): fica o vínculo ativo e, no empate, o de
+        # contratação mais recente. Sem data dos dois lados, fica o primeiro.
+        anterior = por_nome.get(nome.lower())
+        if anterior is None or (eh_ativo, contrat or date.min) > (anterior[6], anterior[7] or date.min):
+            por_nome[nome.lower()] = reg
+    regs = list(por_nome.values())
 
     with conn.cursor() as cur:
         cur.execute("TRUNCATE silver.dpara_corretor_headcount")
-        for nome, apelido, imob, house, ger, sup in regs:
+        for reg in regs:
             cur.execute(
                 sql.SQL("INSERT INTO silver.dpara_corretor_headcount "
-                        "(corretor, apelido, imobiliaria, house, gerente, supervisor) "
-                        "VALUES (%s,%s,%s,%s,%s,%s) ON CONFLICT (corretor) DO NOTHING"),
-                (nome, apelido, imob, house, ger, sup),
+                        "(corretor, apelido, imobiliaria, house, gerente, supervisor, "
+                        " eh_ativo, dt_contratacao, dt_desligamento) "
+                        "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s) ON CONFLICT (corretor) DO NOTHING"),
+                reg,
             )
-    log.info("  silver.%-24s <- %3d linhas (aba Base Pafil, só Ativos)", "dpara_corretor_headcount", len(regs))
+    ativos = sum(1 for r in regs if r[6])
+    sem_data = sum(1 for r in regs if r[7] is None)
+    log.info("  silver.%-24s <- %3d linhas (aba Base Pafil, quadro inteiro: %d ativos, "
+             "%d desligados%s)", "dpara_corretor_headcount", len(regs), ativos,
+             len(regs) - ativos,
+             f"; {sem_data} sem Dt contratação" if sem_data else "")
+    if trocados:
+        log.warning("  headcount: %d célula(s) de texto com data dentro, gravadas como "
+                    "nulo — vale avisar o backoffice: %s", len(trocados),
+                    ", ".join(trocados[:5]) + (" ..." if len(trocados) > 5 else ""))
+    return len(regs)
+
+
+def carregar_headcount_mensal(conn, xlsx: Path) -> int:
+    """Carrega silver.dpara_corretor_headcount_mensal (DP-16): a matriz mensal de
+    corretor ativo da MESMA planilha do headcount (aba "Base Pafil"), despivotada
+    para 1 linha por corretor × mês.
+
+    A planilha tem uma coluna por mês (dd/mm/aaaa, de jan/2022 a dez/2026 na carga
+    de setembro de 2026) com 0/1, e é dela que saem as colunas "Meses Ativos 2024"
+    e "Meses Ativos 2025" que o BI legado usava como denominador fixo. Aqui a série
+    inteira vira dado, e quem escolhe a janela é a medida DAX (respeitando o filtro
+    de período da página, em vez de dois anos fixos no código).
+
+    Ao contrário de carregar_headcount_corretores (que só quer o roster corrente),
+    aqui entram todos os corretores da planilha, incluindo desligados: meses ativos
+    são história, e quem saiu em março ainda trabalhou três meses naquele ano.
+
+    O mês corrente costuma estar zerado na planilha (o backoffice preenche depois),
+    o que zeraria o denominador do mês em curso. Por isso a coluna `ativo` efetiva
+    segue a planilha até o último mês que ela preencheu de fato e, dali até o mês
+    corrente, cai para o que as datas de contratação/desligamento dizem. Mês futuro
+    nunca conta como ativo.
+    """
+    import openpyxl
+
+    wb = openpyxl.load_workbook(xlsx, read_only=True, data_only=True)
+    ws = wb["Base Pafil"]
+    linhas = list(ws.iter_rows(values_only=True))
+    hdr_idx = next(i for i, r in enumerate(linhas) if r and any(c == "Nome" for c in r if c) and any(c == "Gerente" for c in r if c))
+    hdr = list(linhas[hdr_idx])
+    j_nome = hdr.index("Nome")
+    j_contrat, j_deslig = hdr.index("Dt contratação"), hdr.index("Dt desligamento")
+
+    # colunas de mês: o cabeçalho vem como texto "dd/mm/aaaa" ou já como data
+    meses: list[tuple[int, date]] = []
+    for j, h in enumerate(hdr):
+        if isinstance(h, datetime):
+            meses.append((j, h.date().replace(day=1)))
+        elif isinstance(h, date):
+            meses.append((j, h.replace(day=1)))
+        elif isinstance(h, str) and re.fullmatch(r"\d{2}/\d{2}/\d{4}", h.strip()):
+            d, m, a = h.strip().split("/")
+            meses.append((j, date(int(a), int(m), int(d)).replace(day=1)))
+    if not meses:
+        log.warning("  headcount mensal: nenhuma coluna de mês na aba Base Pafil — nada a carregar.")
+        return 0
+
+    def _data(v) -> date | None:
+        if isinstance(v, datetime):
+            return v.date()
+        return v if isinstance(v, date) else None
+
+    def _mes(d: date | None) -> date | None:
+        return d.replace(day=1) if d else None
+
+    hoje_mes = date.today().replace(day=1)
+
+    # 1ª passada: lê a planilha. Nome repetido (o mesmo corretor com uma linha
+    # antiga de desligamento e outra de recontratação) colapsa em max() por mês.
+    brutos: dict[tuple[str, date], dict] = {}
+    nomes: dict[str, str] = {}                      # chave minúscula -> grafia da planilha
+    for r in linhas[hdr_idx + 1:]:
+        nome = (r[j_nome] or "").strip() if r[j_nome] else ""
+        if not nome:
+            continue
+        nomes.setdefault(nome.lower(), nome)
+        nome = nomes[nome.lower()]
+        contrat, deslig = _data(r[j_contrat]), _data(r[j_deslig])
+        m_contrat, m_deslig = _mes(contrat), _mes(deslig)
+        for j, mes in meses:
+            planilha = 1 if str(r[j]).strip() in ("1", "1.0", "True") else 0
+            contrato = None
+            if m_contrat:
+                contrato = 1 if mes >= m_contrat and (m_deslig is None or mes <= m_deslig) else 0
+            reg = brutos.setdefault((nome, mes), {"planilha": 0, "contrato": None,
+                                                  "contratacao": None, "desligamento": None})
+            reg["planilha"] = max(reg["planilha"], planilha)
+            if contrato is not None:
+                reg["contrato"] = max(reg["contrato"] or 0, contrato)
+            reg["contratacao"] = max(filter(None, (reg["contratacao"], contrat)), default=None)
+            reg["desligamento"] = max(filter(None, (reg["desligamento"], deslig)), default=None)
+
+    # 2ª passada: fronteira de preenchimento da planilha (último mês com algum 1) e
+    # cálculo do `ativo` efetivo.
+    fronteira = max((mes for (_, mes), reg in brutos.items() if reg["planilha"] == 1), default=None)
+    regs = []
+    for (nome, mes), reg in sorted(brutos.items()):
+        if fronteira and mes <= fronteira:
+            ativo = reg["planilha"]
+        elif mes <= hoje_mes:
+            ativo = reg["contrato"] if reg["contrato"] is not None else reg["planilha"]
+        else:
+            ativo = 0
+        regs.append((nome, mes, ativo, reg["planilha"], reg["contrato"],
+                     reg["contratacao"], reg["desligamento"]))
+
+    with conn.cursor() as cur:
+        cur.execute("TRUNCATE silver.dpara_corretor_headcount_mensal")
+        cur.executemany(
+            "INSERT INTO silver.dpara_corretor_headcount_mensal "
+            "(corretor, mes, ativo, ativo_planilha, ativo_contrato, dt_contratacao, dt_desligamento) "
+            "VALUES (%s,%s,%s,%s,%s,%s,%s) ON CONFLICT (corretor, mes) DO NOTHING",
+            regs,
+        )
+    ativos = sum(r[2] for r in regs)
+    log.info("  silver.%-24s <- %5d linhas (%d corretores × %d meses, %d meses-corretor ativos; "
+             "planilha preenchida até %s)", "dpara_corretor_headcount_mensal", len(regs),
+             len(nomes), len(meses), ativos, fronteira.strftime("%m/%Y") if fronteira else "-")
     return len(regs)
 
 
@@ -1456,7 +1616,8 @@ def main() -> int:
     ap.add_argument("--gerentes", help="caminho de depara_gerentes.xlsx (recarrega "
                                        "dpara_gerente_contexto). Default: variável DEPARA_GERENTES_XLSX do .env")
     ap.add_argument("--headcount-corretores", help="caminho de Base Corretores Pafil.xlsx (recarrega "
-                                       "dpara_corretor_headcount, só Ativos). Default: HEADCOUNT_CORRETORES_XLSX do .env")
+                                       "dpara_corretor_headcount, só Ativos, e dpara_corretor_headcount_mensal, "
+                                       "a matriz de meses ativos com todos). Default: HEADCOUNT_CORRETORES_XLSX do .env")
     ap.add_argument("--leads-apoio", help="caminho de Base de Leads.xlsm (aba Apoio: recarrega os 4 "
                                           "de-paras de lead vivos). Default: DEPARA_LEADS_XLSM do .env")
     ap.add_argument("--etapa-precadastro", help="caminho de Base - Crédito.xlsm (aba Apoio: recarrega "
@@ -1560,7 +1721,10 @@ def main() -> int:
             hx = Path(headcount_path)
             if hx.exists():
                 total += carregar_headcount_corretores(conn, hx)
-                n_seeds += 1
+                # mesma planilha, outro grão: a matriz mensal (DP-16) que alimenta
+                # os "meses ativos" da página Performance.
+                total += carregar_headcount_mensal(conn, hx)
+                n_seeds += 2
             else:
                 log.warning("  headcount xlsx não encontrado (%s) — dpara_corretor_headcount mantida como está.", hx)
         if apoio_ok:

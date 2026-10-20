@@ -18,7 +18,7 @@ de cada objeto).
 | `gold.dim_empreendimento` | dimensão | 1 empreendimento | derivada de `silver.unidades`, com a região vinda da reserva |
 | `gold.dim_unidade` | dimensão | 1 unidade | `silver.unidades` |
 | `gold.dim_corretor` | dimensão | 1 corretor (`id_corretor`) | `silver.corretores`, com a equipe vindo do headcount (`dpara_corretor_headcount` como fonte primária; como fallback, o gerente da reserva mais recente cruzado com `dpara_gerente_contexto`, seguindo o override da regra DP-09) |
-| `gold.dim_corretor_headcount` | dimensão | 1 corretor ativo (por nome) | `silver.dpara_corretor_headcount` (a equipe) cruzada com `dpara_imobiliaria_house` (Share, House/Parcerias e Regional, resolvidos pelo escritório). Não tem join com `silver.corretores`, que era justamente o que gerava duplicidade e valores vazios em `dim_corretor`. Relacione sempre por `corretor_chave` (veja mais abaixo) |
+| `gold.dim_corretor_headcount` | dimensão | 1 corretor por `corretor_chave`, quadro inteiro (use `eh_ativo` para o time corrente) | `silver.dpara_corretor_headcount` (a equipe, mais `eh_ativo`, `dt_contratacao`, `dt_desligamento` e o `meses_de_casa` calculado) cruzada com `dpara_imobiliaria_house` (Share, House/Parcerias e Regional, resolvidos pelo escritório). Não tem join com `silver.corretores`, que era justamente o que gerava duplicidade e valores vazios em `dim_corretor`. Relacione sempre por `corretor_chave` (veja mais abaixo) |
 | `gold.fato_leads` | fato | 1 lead | `silver.leads` |
 | `gold.fato_precadastros` | fato | 1 pré-cadastro | `silver.precadastros` |
 

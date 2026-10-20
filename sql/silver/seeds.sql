@@ -33,17 +33,80 @@ CREATE TABLE IF NOT EXISTS silver.dpara_gerente_contexto (
 -- do corretor: planilha manual do backoffice (Nome, Imobiliaria, House, Gerente,
 -- Supervisor, Ativo/Inativo), MAIS confiável que a derivação via reserva mais
 -- recente do CVDW (que mistura texto solto e ambiguidade de contexto — ver DP-01).
--- Só carrega corretores ATIVOS (a planilha também tem histórico de desligados, que
--- não interessa p/ ranking/equipe corrente). Chave = nome do corretor (mesmo padrão
--- de DP-09/dpara_corretor_gerente — não há ID comum entre a planilha e o CVDW).
+-- Chave = nome do corretor (mesmo padrão de DP-09/dpara_corretor_gerente — não há ID
+-- comum entre a planilha e o CVDW).
+--
+-- Carrega o QUADRO INTEIRO da planilha, ativos e desligados, com `eh_ativo` dizendo
+-- quem é quem. Até 10/set/2026 carregava só os Ativos, e isso furava a página
+-- Performance: as linhas da matriz vêm desta dimensão, então quem saiu no meio do ano
+-- perdia a linha enquanto as vendas dele continuavam na fato, caindo na linha em
+-- branco do relacionamento (em 09/2026 eram 3 corretores e 12 das 77 vendas do ano).
+-- O legado não tinha esse furo porque as linhas vinham de `f_headcount`, a planilha
+-- inteira, e o Power BI escondia sozinho quem não tivesse número no período.
+-- Quem quer só o time corrente filtra por `eh_ativo` — o filtro fica visível na
+-- página, em vez de escondido no loader.
 CREATE TABLE IF NOT EXISTS silver.dpara_corretor_headcount (
-    corretor    text PRIMARY KEY,
-    apelido     text,
-    imobiliaria text,
-    house       text,
-    gerente     text,
-    supervisor  text,
-    _origem     text DEFAULT 'SharePoint: HeadCount/Base Corretores Pafil 22-23.xlsx (aba Base Pafil, só Ativos)'
+    corretor        text PRIMARY KEY,
+    apelido         text,
+    imobiliaria     text,
+    house           text,
+    gerente         text,
+    supervisor      text,
+    eh_ativo        boolean NOT NULL DEFAULT true,  -- "Ativo/Inativo" da planilha
+    dt_contratacao  date,   -- "Dt contratação" da planilha (data de entrada)
+    dt_desligamento date,   -- "Dt desligamento" (data de saída)
+    _origem         text DEFAULT 'SharePoint: HeadCount/Base Corretores Pafil 22-23.xlsx (aba Base Pafil, quadro inteiro)'
+);
+-- Migração 10/set/2026 (duas coisas na mesma passada): as datas de contratação e
+-- desligamento no grão do corretor, e a abertura do carregamento para o quadro inteiro.
+--
+-- As datas já existiam no DP-16 (repetidas em cada linha de mês), mas o farol da página
+-- Performance precisa delas no grão de 1 linha por corretor: o branco ("não apto/
+-- entrada recente") é literalmente tempo de casa, e derivá-lo da soma de meses ativos
+-- era um proxy — ele contava zero para quem entrou e saiu antes, e não distinguia
+-- "entrou mês passado" de "esteve fora da folha por dois meses".
+--
+-- Corretor recontratado tem mais de uma linha na planilha (a antiga, com a data de
+-- saída, e a atual). O loader colapsa em uma só, preferindo o vínculo ATIVO e, entre
+-- vínculos do mesmo status, o de contratação mais recente — é o que responde "há
+-- quanto tempo essa pessoa está na casa hoje" (o caso real é Beatriz Eburneo de
+-- Barros: entrou em 02/2024, saiu em 10/2024 e voltou em 02/2025 — vale 02/2025). O
+-- histórico de todos os vínculos continua no DP-16, que despivota linha a linha.
+--
+-- Para quem está Ativo, `dt_desligamento` normalmente é vazia; quando vem preenchida,
+-- é a janela em que o backoffice lançou a saída mas ainda não virou o status, que é
+-- justamente quando o farol cobraria venda de quem já não está na casa.
+ALTER TABLE silver.dpara_corretor_headcount ADD COLUMN IF NOT EXISTS dt_contratacao  date;
+ALTER TABLE silver.dpara_corretor_headcount ADD COLUMN IF NOT EXISTS dt_desligamento date;
+ALTER TABLE silver.dpara_corretor_headcount ADD COLUMN IF NOT EXISTS eh_ativo boolean NOT NULL DEFAULT true;
+
+-- DP-16 — headcount MENSAL do corretor (a matriz de "meses ativos" da mesma planilha
+-- do DP-12, despivotada: 1 linha por corretor × mês). É o denominador das medidas de
+-- produtividade da página Performance (Vendas/Mês, Pasta/Mês, Ativo/Mês...) e o
+-- critério do farol branco ("não apto/entrada recente") — sem essa série não dá pra
+-- saber quantos meses o corretor esteve na casa dentro do período filtrado.
+--
+-- Aqui, ao contrário do DP-12, entram TODOS os corretores da planilha (inclusive os
+-- desligados): a série é histórica por natureza, e um corretor que saiu em março
+-- ainda tem 3 meses ativos no ano.
+--
+-- 3 colunas de "ativo" porque a planilha do backoffice é preenchida à mão e costuma
+-- atrasar o mês corrente (em 09/set/2026, set/2026 estava zerado para todo mundo):
+--   ativo_planilha  — o 0/1 exatamente como está na célula da planilha;
+--   ativo_contrato  — derivado de Dt contratação/Dt desligamento (sempre atual);
+--   ativo           — o efetivo, usado pelas medidas: segue a planilha até o último
+--                     mês que ela realmente preencheu e cai para o contrato nos meses
+--                     seguintes, até o mês corrente (mês futuro nunca conta).
+CREATE TABLE IF NOT EXISTS silver.dpara_corretor_headcount_mensal (
+    corretor        text NOT NULL,
+    mes             date NOT NULL,          -- sempre o dia 1 do mês
+    ativo           smallint NOT NULL,
+    ativo_planilha  smallint,
+    ativo_contrato  smallint,
+    dt_contratacao  date,
+    dt_desligamento date,
+    _origem         text DEFAULT 'SharePoint: HeadCount/Base Corretores Pafil 22-23.xlsx (aba Base Pafil, colunas de mês)',
+    PRIMARY KEY (corretor, mes)
 );
 
 -- DP-02 — canal/mídia (unifica as 3 versões do legado, com vigência — R3)

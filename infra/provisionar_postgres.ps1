@@ -99,7 +99,14 @@ $pgHba = Join-Path $DataDir "pg_hba.conf"
 host    all             all             127.0.0.1/32            scram-sha-256
 host    all             all             ::1/128                 scram-sha-256
 # host  pafil_dw        pafil_bi        10.0.0.0/16             scram-sha-256   # gateway Power BI (7.5)
+# host  pafil_dw        pafil_n8n       172.16.0.0/12           scram-sha-256   # automacao de reporting
 '@ | Set-Content -Path $pgHba -Encoding ascii
+
+# ATENCAO: este bloco SOBRESCREVE o pg_hba.conf inteiro. Se a automacao de
+# reporting ja estiver liberada (a linha do pafil_n8n descomentada), rodar este
+# script de novo derruba o acesso dela e o envio para silenciosamente -- os
+# prints simplesmente param de chegar. Descomente a linha acima ANTES de
+# reexecutar. Ver automacao_reporting/README.md secao 3.
 
 Restart-Service $servico.Name
 Start-Sleep -Seconds 3

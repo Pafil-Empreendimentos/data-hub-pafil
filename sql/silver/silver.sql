@@ -540,9 +540,18 @@ FROM bronze.leads_conversoes c;
 -- com o que já está no ar. Grão = 1 linha por atendimento (idatendimento).
 -- Mesmo tratamento de cliente que silver.reservas/vendas (não omite PII: é
 -- cliente já identificado, pós-venda, não lead de marketing).
--- humor_cliente e tags/atendimentos_vinculados ficam crus (texto): a amostra
--- inteira disponível hoje (10 registros) só mostrou 'N'/vazio, sem variedade
--- suficiente pra decidir uma normalização — revisar quando o volume crescer.
+-- tags/atendimentos_vinculados ficam crus (texto): ainda sem uso nas páginas.
+--
+-- humor_cliente: o CVDW devolve o campo "Humor do Cliente" do CVCRM como um
+-- código de 1 letra. Conferido na API em 08/out/2026 (329 atendimentos, a
+-- população inteira): N = 297, I = 27, S = 1, vazio = 4. Decodificado aqui, e a
+-- gold herda o texto. Só o N está confirmado contra a tela do CVCRM (o
+-- atendimento 2610080328 mostra "Normal" e a API traz 'N'). I = Irritado e
+-- S = Satisfeito são INFERIDOS: os 27 'I' são todos Atraso de Obra/Distrato/
+-- Despesas da Unidade, assuntos de cliente insatisfeito, e o único 'S' é uma
+-- 2ª via de boleto. Se as opções do dropdown no CVCRM tiverem outro texto,
+-- corrigir só os rótulos do CASE abaixo. Código desconhecido aparece cru em vez
+-- de sumir, pra uma opção nova do CVCRM ficar visível no gráfico.
 -- ===========================================================================
 CREATE OR REPLACE VIEW silver.atendimentos_cvcrm AS
 SELECT
@@ -593,13 +602,23 @@ SELECT
     (upper(btrim(coalesce(a.ativo,'')))       = 'S')        AS eh_ativo,
     (upper(btrim(coalesce(a.ativo_painel,'')))= 'S')        AS eh_ativo_painel,
     (upper(btrim(coalesce(a.encerrado_primeiro_contato,''))) = 'S') AS eh_resolvido_primeiro_contato,
-    btrim(a.humor_cliente)                                  AS humor_cliente,
+    CASE upper(btrim(coalesce(a.humor_cliente, '')))
+         WHEN ''  THEN 'Não informado'
+         WHEN 'N' THEN 'Normal'
+         WHEN 'I' THEN 'Irritado'
+         WHEN 'S' THEN 'Satisfeito'
+         ELSE btrim(a.humor_cliente)
+    END                                                     AS humor_cliente,
 
     a.avaliacao,
     a.quantidade_mensagens,
     a.quantidade_interacoes,
-    -- tempo_resposta/tempo_finalizado: segundos (inferido pela ordem de grandeza
-    -- vs. data_cad/data_finalizado da amostra; validar quando o volume crescer).
+    -- tempo_finalizado: MINUTOS inteiros (truncados), da abertura ao fechamento.
+    -- Confirmado em 08/out/2026: floor((data_finalizado - data_cad) / 60 s) bate
+    -- com o valor em 304 dos 304 finalizados. A versão anterior deste comentário
+    -- dizia "segundos" (inferência pela ordem de grandeza) e estava errada.
+    -- tempo_resposta: só 3 registros preenchidos em 329, então a unidade não dá
+    -- pra provar; assumida igual à de tempo_finalizado (minutos).
     a.tempo_resposta,
     a.tempo_finalizado,
 
@@ -615,3 +634,31 @@ SELECT
     to_char(a.data_cad, 'YYYY-MM')                          AS ano_mes_cad,
     a._data_extracao
 FROM bronze.atendimentos_cvcrm a;
+
+
+-- ===========================================================================
+-- ATENDIMENTOS (CVCRM): tempo por situação do workflow. Grão = 1 linha por
+-- etapa por onde o atendimento passou (id_tempo). `tempo_min` é quanto o
+-- atendimento ficou na etapa, em MINUTOS, e `data_saida` é o momento em que
+-- SAIU dela (a `data_cad` do CVCRM nesse endpoint). A etapa em que o atendimento
+-- está agora ainda não tem linha: ela só nasce quando ele sai. Conferido em
+-- 14/out/2026: a soma de `tempo_min` de um atendimento bate com
+-- `tempo_finalizado` em 396 dos 413 finalizados (diferença máxima de 4 min).
+--
+-- `eh_em_atendimento` marca a etapa "Em Atendimento", a que o próprio workflow
+-- do CVCRM sinaliza com a flag `ematendimento` (GET /configuracoes/workflows/
+-- atendimentos). É por ela que se separa o tempo de atender (nesta etapa) do
+-- de pegar (tudo o que vem antes). Pelo nome e não pelo id, como o resto da
+-- silver faz com 'Cancelado'; o id hoje é 12.
+-- ===========================================================================
+CREATE OR REPLACE VIEW silver.atendimentos_workflow_tempo AS
+SELECT
+    w.idtempo::bigint                       AS id_tempo,
+    w.idatendimento::bigint                 AS id_atendimento,
+    w.idsituacao::bigint                    AS id_situacao,
+    btrim(w.situacao)                       AS situacao,
+    w.tempo                                 AS tempo_min,
+    w.data_cad                              AS data_saida,
+    (btrim(w.situacao) = 'Em Atendimento')  AS eh_em_atendimento,
+    w._data_extracao
+FROM bronze.atendimentos_workflow_tempo w;

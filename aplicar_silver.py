@@ -31,7 +31,7 @@ VIEWS = [
     "reservas", "vendas", "distratos",
     "unidades", "corretores", "imobiliarias",
     "leads", "precadastros", "leads_conversoes",
-    "atendimentos_cvcrm",
+    "atendimentos_cvcrm", "atendimentos_workflow_tempo",
     "blip_tickets", "blip_filas", "blip_atendentes",
     "mdnet_chamadas", "mdnet_ura_passagens", "mdnet_ura_menu", "mdnet_ura_chamadas",
 ]
