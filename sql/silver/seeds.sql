@@ -10,7 +10,7 @@ DROP TABLE IF EXISTS silver.dpara_gerentes;
 -- Migração 21/jul/2026 (passo atrás, mesmo dia): dim_gerente (pessoa via
 -- bronze.leads.idgestor) foi DESCARTADA — foi apontado que "o que vem do CVDW como
 -- equipes é falho" (idgestor mistura SDR/robô com gerente de venda; ver
--- [[depara-gerentes-reestruturacao-v2]]). A fonte autoritativa de equipe/gerente/
+-- docs/de-paras.md). A fonte autoritativa de equipe/gerente/
 -- supervisor por CORRETOR é a planilha manual do backoffice (headcount), abaixo.
 DROP TABLE IF EXISTS silver.dim_gerente;
 

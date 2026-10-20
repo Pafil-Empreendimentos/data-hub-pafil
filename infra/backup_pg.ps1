@@ -1,13 +1,12 @@
 # backup_pg.ps1 -- dump logico diario do Pafil DW, com retencao (Windows).
 #
-# Instalado como uma Tarefa Agendada (rodando como SYSTEM) por
-# README.md, as 02:30 (America/Sao_Paulo), antes da ingestao diaria
-# das 03:00. Rodar como SYSTEM e o que garante que ela dispara mesmo sem
-# ninguem logado na instancia -- e o equivalente Windows do cron.d da versao
-# Linux (versão removida do repositório, ver o histórico do git).
+# Instalado como uma Tarefa Agendada (rodando como SYSTEM), todo dia as 05:00
+# (America/Sao_Paulo), antes da ingestao, que comeca as 06:00. Rodar como SYSTEM
+# e o que garante que ela dispara mesmo sem ninguem logado. Instalacao: README.md,
+# secao 5.
 #
-# Esta maquina NAO e uma instancia EC2 (confirmado em 20/ago/2026, ver a
-# memoria "hospedagem-producao"): e fisica ou local, sem EBS e sem snapshot
+# Esta maquina NAO e uma instancia EC2 (confirmado em 20/ago/2026): e fisica
+# ou local, sem EBS e sem snapshot
 # automatico por baixo. Por isso este dump nao e uma segunda camada de
 # protecao, e a UNICA: se o disco desta maquina falhar, so existe recuperacao
 # se $PastaExterna ou $BucketS3 abaixo estiver configurado e realmente

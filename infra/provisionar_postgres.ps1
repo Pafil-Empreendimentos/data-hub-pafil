@@ -1,10 +1,9 @@
 # provisionar_postgres.ps1 -- configura o PostgreSQL 16 na maquina Windows de
 # producao do Pafil DW.
 #
-# Etapa 7.2 do roadmap (versao Windows -- a TI passou credenciais de RDP para
-# uma maquina Windows fisica/local, NAO uma EC2; ver README.md e a
-# memoria "hospedagem-producao" para o historico da decisao). Idempotente:
-# pode rodar de novo sem quebrar nada.
+# Configura o PostgreSQL da maquina de producao (a TI passou credenciais de RDP
+# para uma maquina Windows fisica/local, NAO uma EC2; o historico da decisao esta
+# em docs/decisoes.md). Idempotente: pode rodar de novo sem quebrar nada.
 #
 # Este script NAO instala o PostgreSQL: pressupoe que o instalador oficial do
 # PostgreSQL 16 (EDB, postgresql.org/download/windows) ja rodou e criou o
