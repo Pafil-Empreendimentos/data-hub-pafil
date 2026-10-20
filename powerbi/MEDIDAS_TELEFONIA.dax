@@ -252,8 +252,8 @@ CALCULATE (
 
 // Quem passou pela URA e ninguém atendeu (14/out/2026). Total da URA menos as atendidas, então
 // [Ligações URA Atendidas] + [Ligações URA Não Atendidas] = [Ligações URA]. Serve para a rosca "Entradas
-// URA" e para a tabela das opções do menu. Aqui o ruído não é tirado: o ruído quase não passa pela
-// URA, e a conta da tabela tem que fechar com o total dela.
+// URA" e para a tabela das opções do menu. Aqui o ruído NÃO é tirado: em 16/out/2026, 487 das 3.174 ligações da URA
+// são ruído (426 só em "Desligou durante o menu"). Por isso estas medidas diferem das de setor e ramal, que usam as reais.
 Ligações URA Não Atendidas =
 COALESCE ( [Ligações URA], 0 ) - COALESCE ( [Ligações URA Atendidas], 0 )
 
@@ -262,6 +262,26 @@ DIVIDE ( COALESCE ( [Ligações URA Atendidas], 0 ), [Ligações URA] )
 
 % Não Atendimento URA =
 DIVIDE ( [Ligações URA Não Atendidas], [Ligações URA] )
+
+// Versões REAIS (sem ruído), 16/out/2026, pedido do Igor: a tabela das opções do menu e as roscas passam
+// a seguir a mesma regra dos cartões, da tabela de setor e da de ramal. Atendida nunca é ruído, então
+// [Ligações URA Atendidas] serve para as duas versões. As bruta (acima) ficam para conferir.
+Ligações URA Reais =
+CALCULATE (
+    COUNTROWS ( fato_chamadas ),
+    fato_chamadas[direcao] = "Entrada",
+    fato_chamadas[passou_ura] = TRUE (),
+    fato_chamadas[e_ruido] = FALSE ()
+)
+
+Ligações URA Não Atendidas Reais =
+COALESCE ( [Ligações URA Reais], 0 ) - COALESCE ( [Ligações URA Atendidas], 0 )
+
+% Atendimento URA Real =
+DIVIDE ( COALESCE ( [Ligações URA Atendidas], 0 ), [Ligações URA Reais] )
+
+% Não Atendimento URA Real =
+DIVIDE ( [Ligações URA Não Atendidas Reais], [Ligações URA Reais] )
 
 URA Escolheu Opção =
 CALCULATE (
@@ -443,10 +463,11 @@ RETURN
 // =============================================================================
 
 CSS Tabela URA (linhas) =
--- 14/out/2026: as três tabelas (opção da URA, setor e ramal) passaram a ter 8 colunas (rótulo + 7
--- números), que é o número de colunas do CSS do CVCRM, então não há mais troca de repeat(). Fontes e
--- espaços menores que na versão de 5 colunas, para caber na mesma largura.
+-- 15/out/2026: as três tabelas (opção da URA, setor e ramal) têm 8 colunas (rótulo + 7 números). A grade
+-- é declarada AQUI, depois do CSS base, e não herdada: o CVCRM ajustou a base para repeat(10,auto) e
+-- as três tabelas se embaralharam. A regra que vem depois vence a da base.
 [CSS Tabela Atendimentos CVCRM]
+    & "#htmlContent{grid-template-columns:repeat(8,auto);}"
     & "#htmlContent{font-size:36px;}"
     & ".th{font-size:26px;padding:18px 12px;text-align:center;white-space:normal;line-height:1.15;}"
     & ".td{padding:12px 12px;text-align:center;}"
@@ -471,16 +492,16 @@ MIN ( fato_chamadas[ura_opcao_ordem] )
 
 Linha Opção URA HTML =
 VAR _opcao  = SELECTEDVALUE ( fato_chamadas[ura_opcao] )
-VAR _lig    = [Ligações URA]
+VAR _lig    = [Ligações URA Reais]
 -- COALESCE: linha sem nenhuma atendida (Desligou na URA) vinha em branco e a pílula virava um traço.
 VAR _atend  = COALESCE ( [Ligações URA Atendidas], 0 )
 VAR _pct    = DIVIDE ( _atend, _lig )
 -- A barra de volume é relativa à maior opção DENTRO do recorte atual (período, setor clicado
 -- em outro visual), e não à maior de sempre. O clique nesta tabela não entra nesse
 -- contexto, então as barras não mudam ao selecionar uma linha.
-VAR _max    = MAXX ( ALLSELECTED ( fato_chamadas[ura_opcao] ), [Ligações URA] )
+VAR _max    = MAXX ( ALLSELECTED ( fato_chamadas[ura_opcao] ), [Ligações URA Reais] )
 VAR _barra  = FORMAT ( DIVIDE ( _lig, _max ) * 100, "0" )
-VAR _nao    = [Ligações URA Não Atendidas]
+VAR _nao    = [Ligações URA Não Atendidas Reais]
 VAR _pctNao = DIVIDE ( _nao, _lig )
 -- Taxa de atendimento: verde a partir de 50%, cinza de 25% a 49%, vermelho abaixo de 25%. A de não
 -- atendidas é o espelho: vermelho a partir de 75%, cinza de 51% a 74%, verde até 50%.
@@ -490,13 +511,18 @@ VAR _espera = COALESCE ( [Espera Média], "--" )
 VAR _falado = COALESCE ( [Tempo Falado Médio], "--" )
 VAR _rotulo =
     SUBSTITUTE ( SUBSTITUTE ( SUBSTITUTE ( COALESCE ( _opcao, "" ), "&", "&amp;" ), "<", "&lt;" ), ">", "&gt;" )
+-- O cabeçalho só é desenhado na PRIMEIRA linha do visual (ver o CSS). Se a primeira linha vier vazia (uma
+-- opção cujas ligações são todas ruído, por exemplo), ela não pode devolver BLANK: devolve só o
+-- cabeçalho, e a tabela nunca fica sem ele, seja qual for o filtro.
+VAR _hdr =
+    "<div class='hdr'><div class='th'>OPÇÃO DO MENU</div><div class='th num'>TOTAL LIGAÇÕES</div>"
+        & "<div class='th num'>NÃO ATENDIDAS</div><div class='th num'>ATENDIDAS</div>"
+        & "<div class='th'>TX NÃO ATENDIDAS</div><div class='th'>TX ATENDIDAS</div>"
+        & "<div class='th num'>ESPERA</div><div class='th num'>CONVERSA</div></div>"
 RETURN
     IF (
         NOT ISBLANK ( _opcao ) && _lig > 0,
-        "<div class='hdr'><div class='th'>OPÇÃO DO MENU</div><div class='th num'>TOTAL LIGAÇÕES</div>"
-            & "<div class='th num'>NÃO ATENDIDAS</div><div class='th num'>ATENDIDAS</div>"
-            & "<div class='th'>TX NÃO ATENDIDAS</div><div class='th'>TX ATENDIDAS</div>"
-            & "<div class='th num'>ESPERA</div><div class='th num'>CONVERSA</div></div>"
+        _hdr
             & "<div class='td nome'>" & _rotulo & "</div>"
             & "<div class='td num' style='background-image:linear-gradient(to right,rgba(0,50,84,.14) "
             & _barra & "%,transparent " & _barra & "%)'>" & FORMAT ( _lig, "#,0" ) & "</div>"
@@ -506,7 +532,8 @@ RETURN
             & "<div class='td'><span class='sit " & _classe & "'>" & FORMAT ( _pct, "0%" ) & "</span></div>"
             & "<div class='td num'>" & _espera & "</div>"
             & "<div class='td num'>" & _falado & "</div>"
-            & "<div class='cap'>Atendidas: ligações com conversa. Não atendidas = total da opção menos as atendidas. Tx atendidas em verde a partir de 50%, cinza de 25% a 49% e vermelho abaixo de 25%; Tx não atendidas é o espelho. Espera: tempo médio até atender, contando a URA. Conversa: tempo falado médio.</div>"
+            & "<div class='cap'>Atendidas: ligações com conversa. Não atendidas = total da opção menos as atendidas. Tx atendidas em verde a partir de 50%, cinza de 25% a 49% e vermelho abaixo de 25%; Tx não atendidas é o espelho. Espera: tempo médio até atender, contando a URA. Conversa: tempo falado médio. Sem ruído (robocall e spam).</div>",
+        _hdr
     )
 
 // =============================================================================
@@ -580,6 +607,8 @@ RETURN
             & _barra & "%,transparent " & _barra & "%)'>" & FORMAT ( _qtd, "#,0" ) & "</div>"
             & [Células Ligações HTML]
             & "<div class='cap'>Ligações reais (sem ruído) por setor. Quase toda ligação não atendida não tem ramal e fica em 'Sem ramal registrado', junto das atendidas sem ramal. Espera: tempo médio até atender, contando a URA. Conversa: tempo falado médio. Vale de fevereiro/2026 em diante.</div>"
+        ,
+        "<div class='hdr'><div class='th'>SETOR</div>" & [Cabeçalho Ligações HTML]
     )
 
 // Ramal (14/out/2026): o mesmo desenho, uma linha por número de ramal, com o setor em cinza ao lado.
@@ -608,6 +637,8 @@ RETURN
             & _barra & "%,transparent " & _barra & "%)'>" & FORMAT ( _qtd, "#,0" ) & "</div>"
             & [Células Ligações HTML]
             & "<div class='cap'>Ligações reais (sem ruído) por ramal. Quase toda ligação não atendida não tem ramal e fica em 'Sem ramal registrado'. O setor ao lado é o de hoje, da planilha de ramais. Vale de fevereiro/2026 em diante.</div>"
+        ,
+        "<div class='hdr'><div class='th'>RAMAL</div>" & [Cabeçalho Ligações HTML]
     )
 
 CSS Tabela Hora x Dia (linhas) =

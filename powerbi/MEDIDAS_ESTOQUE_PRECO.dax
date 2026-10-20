@@ -16,6 +16,13 @@
 //   dim_estrutura[codigo_interno] 1 -> * fato_reservas[codigo_estrutura]   <-- NOVO (task 6.5)
 //   dim_ivv_padrao[codigo_cv]    -> dim_empreendimento[codigo_interno_empreendimento]
 //
+// ⚠️ NÃO deixe ATIVOS dim_estrutura[data_venda] -> dim_calendario[data] nem
+// dim_ivv[data_lancamento] -> dim_calendario[data] (inativos desde 02/out/2026).
+// Estoque e curva de IVV são fotos de hoje: com o relacionamento ativo, um filtro de
+// Ano na página cortava dim_estrutura para só as unidades vendidas naquele ano. O
+// estoque (sem data de venda) sumia, m_ivv_padrao ficava em branco e o
+// % Vendido Acumulado dividia por 5-13 unidades (8800%). Ver MODELO_SEMANTICO.md, seção 3.
+//
 // A relação dim_estrutura -> fato_reservas é o que faz as MATRIZES de posição
 // funcionarem (VGV/M² praticado quebrado por prumada x posição x final). No
 // legado ela vinha pronta pelo "Código interno da unidade" do CSV; a API CVDW não

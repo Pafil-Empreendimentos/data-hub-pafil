@@ -257,21 +257,281 @@ RETURN _css & "<div class='k'>" & "<div class='" & _classeMg & "'><div class='ic
 
 
 // -----------------------------------------------------------------------------
-// 6. VARIANTES POR BLOCO (para a página "Preço por Produto")
+// 6. VARIANTES POR BLOCO — DRILL DOWN (para a página "Preço por Produto")
 //
 //    Matriz M² Realizado por Bloco HTML
 //    Matriz M² A Realizar por Bloco HTML
 //
-// São cópias EXATAS das medidas 1 e 2 com as duas linhas [GRAO] trocadas pelas
-// versões comentadas (SUMMARIZE com bloco + rótulo "produto - bloco") e o
-// cabeçalho de volta para "PRODUTO / BLOCO". O _CelulasRange também volta a
-// agrupar por bloco, senão o gradiente normaliza numa faixa que não é a exibida.
+// STATUS em 18/ago/2026: texto novo, ainda NÃO aplicado no modelo vivo. As
+// duas medidas já existem no PBIX (pasta Preço/HTML), mas com a lógica antiga
+// (cópia das medidas 1/2 só trocando o grão da linha para produto+bloco). Para
+// atualizar, cole o DAX de 6.1 e 6.2 em cima da definição de cada medida no
+// Tabular Editor (ou measure_operations Update via powerbi-mcp) e dê Ctrl+S.
 //
-// Não estão transcritas aqui de propósito: são ~40 linhas idênticas cada uma e
-// duplicar o CSS no arquivo garante que uma hora as duas versões divergem. As
-// duas já existem no modelo (pasta Preço/HTML) — para recriar do zero, duplique
-// a medida 1/2 no Tabular Editor e troque as linhas [GRAO].
+// HISTÓRICO DA IDA E VOLTA (18/ago/2026): a primeira versão desenhada aqui
+// tinha 3 níveis de LINHA (Produto/Bloco > config_1 > config_3) e config_2 só
+// na coluna. Depois de ver o resultado renderizado, o usuário pediu para
+// voltar config_3 para a COLUNA, empilhado sob config_2 — mais perto do
+// desenho original da seção 3.2 do PAGINA_PRECO.md (legado: linhas até a
+// prumada, colunas em 2 níveis "Frente/Fundo" acima de "Final"). A estrutura
+// final ficou assim:
 //
+//   Linhas:  Produto/Bloco > config_1                 (cascata de 2 níveis,
+//            subtotal em cada nível — classes CSS .lvl1/.lvl2)
+//   Colunas: config_2 > config_3                       (cabeçalho de 2 linhas:
+//            <th colspan> agrupando por config_2, sub-colunas de config_3)
+//
+// Não é um drill down clicável de verdade (mesma ressalva de antes): o visual
+// HTML Content não garante suporte a <script>, a "cascata" é só CSS.
+//
+// COMO O CABEÇALHO DE 2 LINHAS FUNCIONA: _ParesColuna é a lista achatada de
+// pares (config_2, config_3) que realmente existem, na mesma ordem usada nas
+// células (Grupo ASC, depois OrdemSub ASC). _Grupos é a lista de config_2
+// distintos DERIVADA de _ParesColuna (não de VALUES direto) — assim um
+// config_2 que não tem nenhum config_3 associado simplesmente não vira grupo,
+// em vez de gerar um <th colspan='0'> quebrado. O colspan de cada grupo é a
+// contagem de pares daquele config_2 em _ParesColuna. Como as duas listas
+// usam a MESMA ordenação (Grupo, OrdemSub), os grupos da 1ª linha do
+// cabeçalho sempre caem exatamente em cima dos sub-cabeçalhos e células que
+// lhes pertencem.
+//
+// ORDENAÇÃO NUMÉRICA DAS SUB-COLUNAS: config_3 mistura textos como "3 e 6" e
+// "134 e 135 (PCD)" — ordenar por texto (ASC puro) põe "134..." antes de
+// "3...", porque "1" < "3" como caractere. OrdemSub extrai o número antes do
+// primeiro espaço (LEFT + FIND) e converte com VALUE, para ordenar 3, 4, 134,
+// 141, 142, 154 na ordem numérica certa. O IFERROR (fallback 999999) existe
+// porque config_3 não é sempre numérico: em Villas do Parque, por exemplo,
+// é texto livre ("detalhe do muro", ver seção 3.5 do PAGINA_PRECO.md) — sem
+// o IFERROR, VALUE() nesses produtos quebraria a medida inteira com erro.
+//
+// DEGENERAÇÃO DA HIERARQUIA (seção 3.5 do PAGINA_PRECO.md): nos 14 produtos,
+// config_2 e config_3 sempre aparecem juntos ou faltam juntos (nunca um sem o
+// outro) — por isso não existe tratamento separado para "tem config_2 mas não
+// config_3". Quando faltam os dois, _ParesColuna fica vazio, os cabeçalhos de
+// coluna somem e sobra só a coluna TOTAL — mesma lógica de fallback graceful
+// da v1. config_1 continua existindo para todos os 14 produtos, então _Nivel2
+// (linha) não tem esse problema.
+//
+// _CelulasRange agrupa pelo grão mais fino que a matriz cruza (Produto/Bloco x
+// config_1 x config_2 x config_3) — mesma lógica das medidas 1/2, só que com
+// 3 colunas a mais no SUMMARIZE.
+// -----------------------------------------------------------------------------
+
+
+// -----------------------------------------------------------------------------
+// 6.1 MATRIZ "M² REALIZADO" POR BLOCO — DRILL DOWN
+// -----------------------------------------------------------------------------
+Matriz M² Realizado por Bloco HTML =
+VAR _e = 3.87
+VAR _CorPrincipal = "#003254"
+VAR _CorGrupo2 = "#2C5F7C"
+VAR _CorZero = "#E0E0E0"
+VAR _Verde1 = "#E8F5E9"
+VAR _Verde2 = "#C8E6C9"
+VAR _Verde3 = "#A5D6A7"
+VAR _Verde4 = "#66BB6A"
+VAR _Verde5 = "#00C36B"
+VAR _ParesColuna = ADDCOLUMNS ( FILTER ( SELECTCOLUMNS ( CALCULATETABLE ( SUMMARIZE ( dim_estrutura, dim_estrutura[config_2], dim_estrutura[config_3] ), ALLSELECTED ( dim_estrutura[config_2] ), ALLSELECTED ( dim_estrutura[config_3] ) ), "Grupo", dim_estrutura[config_2], "Sub", dim_estrutura[config_3] ), NOT ISBLANK ( [Grupo] ) && NOT ISBLANK ( [Sub] ) ), "OrdemSub", IFERROR ( VALUE ( LEFT ( [Sub], FIND ( " ", [Sub] & " " ) - 1 ) ), 999999 ) )
+VAR _Grupos = DISTINCT ( SELECTCOLUMNS ( _ParesColuna, "Grupo", [Grupo] ) )
+VAR _nCols = COUNTROWS ( _ParesColuna )
+VAR _vertical = _nCols > 12
+VAR _fsTh = IF ( _nCols <= 8, 10, IF ( _nCols <= 14, 8, 7 ) ) * _e
+VAR _fsQtd = IF ( _nCols <= 8, 15, IF ( _nCols <= 14, 12, 10 ) ) * _e
+VAR _fsM2 = IF ( _nCols <= 8, 9, IF ( _nCols <= 14, 8, 7 ) ) * _e
+VAR _thCls = IF ( _vertical, " class='rot'", "" )
+VAR _Nivel1 = SUMMARIZE ( dim_estrutura, dim_estrutura[produto], dim_estrutura[bloco] )
+VAR _CelulasRange = ADDCOLUMNS ( SUMMARIZE ( dim_estrutura, dim_estrutura[produto], dim_estrutura[bloco], dim_estrutura[config_1], dim_estrutura[config_2], dim_estrutura[config_3] ), "@v", CALCULATE ( AVERAGE ( dim_estrutura[m2_praticado] ) ) )
+VAR _Max = MAXX ( _CelulasRange, [@v] )
+VAR _Min = MINX ( FILTER ( _CelulasRange, [@v] > 0 ), [@v] )
+VAR _Diff = _Max - _Min
+VAR _CSS = "<style> html,body { margin:0; padding:0; } .container { font-family:'Segoe UI',sans-serif; padding:" & FORMAT(5*_e,"0") & "px; background:white; width:100%; box-sizing:border-box; overflow-x:auto; } .title-area { text-align:center; margin-bottom:" & FORMAT(10*_e,"0") & "px; } .title { color:" & _CorPrincipal & "; font-size:" & FORMAT(18*_e,"0") & "px; font-weight:800; text-transform:uppercase; margin:0; } .pafil-matrix { border-collapse:collapse; font-size:" & FORMAT(11*_e,"0") & "px; width:100%; } .pafil-matrix th { background-color:" & _CorPrincipal & "; color:white; font-size:" & FORMAT(_fsTh,"0") & "px; font-weight:600; padding:" & FORMAT(6*_e,"0") & "px " & FORMAT(4*_e,"0") & "px; text-align:center; border:none; line-height:1.25; white-space:nowrap; vertical-align:bottom; } .pafil-matrix thead tr:last-child th { background-color:" & _CorGrupo2 & "; } .pafil-matrix th.rot { writing-mode:vertical-rl; transform:rotate(180deg); padding:" & FORMAT(8*_e,"0") & "px " & FORMAT(3*_e,"0") & "px; } .pafil-matrix thead tr:first-child th:first-child { border-radius:" & FORMAT(8*_e,"0") & "px 0 0 0; text-align:left; padding-left:" & FORMAT(10*_e,"0") & "px; min-width:16ch; max-width:30ch; white-space:normal; vertical-align:middle; } .pafil-matrix thead tr:first-child th:last-child { border-radius:0 " & FORMAT(8*_e,"0") & "px 0 0; vertical-align:middle; } .pafil-matrix td { padding:" & FORMAT(6*_e,"0") & "px " & FORMAT(4*_e,"0") & "px; border-bottom:" & FORMAT(1*_e,"0") & "px solid #EEE; text-align:center; line-height:1.2; white-space:nowrap; } .pafil-matrix td.row-label { text-align:left !important; font-weight:bold; color:#333; font-size:" & FORMAT(10*_e,"0") & "px; padding-left:" & FORMAT(10*_e,"0") & "px !important; white-space:normal; word-break:normal; overflow-wrap:break-word; max-width:30ch; } .pafil-matrix tr.lvl1 { background-color:#EAF0F4; border-top:" & FORMAT(2*_e,"0") & "px solid #D3DDE3; } .pafil-matrix tr.lvl2 { background-color:#FFFFFF; } .pafil-matrix td.row-label.lvl1 { font-weight:800; color:#0F1E27; font-size:" & FORMAT(10.5*_e,"0") & "px; padding-left:" & FORMAT(10*_e,"0") & "px !important; } .pafil-matrix td.row-label.lvl2 { font-weight:700; color:#3A4750; font-size:" & FORMAT(9.5*_e,"0") & "px; padding-left:" & FORMAT(22*_e,"0") & "px !important; } .qtd-val { font-weight:800; font-size:" & FORMAT(_fsQtd,"0") & "px; color:" & _CorPrincipal & "; display:block; } .m2-val { font-size:" & FORMAT(_fsM2,"0") & "px; color:#666; font-weight:bold; white-space:nowrap; } .footer-total { background-color:" & _CorPrincipal & " !important; color:white !important; font-weight:bold; } .footer-total td { border:none; color:white; padding:" & FORMAT(8*_e,"0") & "px " & FORMAT(4*_e,"0") & "px; } .bar-container { width:100%; height:" & FORMAT(4*_e,"0") & "px; background:#F0F0F0; border-radius:" & FORMAT(2*_e,"0") & "px; margin-top:" & FORMAT(4*_e,"0") & "px; overflow:hidden; } .bar-fill { height:100%; width:100%; border-radius:" & FORMAT(2*_e,"0") & "px; } .total-col { font-weight:800; background-color:rgba(0,50,84,0.05); } </style>"
+VAR _Topo = "<div class='container'><div class='title-area'><h1 class='title'>M² Realizado</h1></div>"
+VAR _TableStart =
+    "<table class='pafil-matrix'><thead><tr><th rowspan='2'>PRODUTO / BLOCO / POSIÇÃO</th>" &
+    CONCATENATEX (
+        _Grupos,
+        VAR _G = [Grupo]
+        VAR _Span = COUNTROWS ( FILTER ( _ParesColuna, [Grupo] = _G ) )
+        RETURN "<th colspan='" & _Span & "'>" & _G & "</th>",
+        "", [Grupo], ASC
+    ) &
+    "<th rowspan='2'>TOTAL</th></tr><tr>" &
+    CONCATENATEX (
+        _ParesColuna,
+        "<th" & _thCls & ">" & IF ( _vertical && LEN ( [Sub] ) > 28, LEFT ( [Sub], 27 ) & "…", [Sub] ) & "</th>",
+        "", [Grupo], ASC, [OrdemSub], ASC
+    ) &
+    "</tr></thead><tbody>"
+VAR _RowsBody =
+    CONCATENATEX (
+        _Nivel1,
+        VAR _Prod = dim_estrutura[produto]
+        VAR _Bloco = dim_estrutura[bloco]
+        VAR _Rotulo1 = _Prod & IF ( ISBLANK ( _Bloco ), "", " - " & _Bloco )
+        VAR _Nivel2 = CALCULATETABLE ( FILTER ( SUMMARIZE ( dim_estrutura, dim_estrutura[config_1] ), NOT ISBLANK ( dim_estrutura[config_1] ) ) )
+        VAR _Cells1 =
+            CONCATENATEX (
+                _ParesColuna,
+                VAR _G = [Grupo]
+                VAR _S = [Sub]
+                VAR _Qtd = CALCULATE ( [Qtd Realizada (matriz)], dim_estrutura[config_2] = _G, dim_estrutura[config_3] = _S )
+                VAR _M2 = CALCULATE ( AVERAGE ( dim_estrutura[m2_praticado] ), dim_estrutura[config_2] = _G, dim_estrutura[config_3] = _S )
+                VAR _dQtd = IF ( ISBLANK ( _Qtd ), 0, _Qtd )
+                VAR _dM2 = IF ( ISBLANK ( _M2 ), 0, _M2 )
+                VAR _Ratio = DIVIDE ( _M2 - _Min, _Diff )
+                VAR _Cor = SWITCH ( TRUE (), _dQtd = 0, _CorZero, _Ratio >= 0.9, _Verde5, _Ratio >= 0.7, _Verde4, _Ratio >= 0.5, _Verde3, _Ratio >= 0.2, _Verde2, _Verde1 )
+                RETURN "<td><span class='qtd-val'>" & _dQtd & "</span><span class='m2-val'>R$ " & FORMAT ( _dM2, "#,0" ) & "</span><div class='bar-container'><div class='bar-fill' style='background-color:" & _Cor & "'></div></div></td>",
+                "", [Grupo], ASC, [OrdemSub], ASC
+            )
+        VAR _RowQtd1 = [Qtd Realizada (matriz)]
+        VAR _RowM21 = CALCULATE ( AVERAGE ( dim_estrutura[m2_praticado] ) )
+        VAR _Row1 = "<tr class='lvl1'><td class='row-label lvl1'>" & _Rotulo1 & "</td>" & _Cells1 & "<td class='total-col'><span class='qtd-val'>" & IF ( ISBLANK ( _RowQtd1 ), 0, _RowQtd1 ) & "</span><span class='m2-val'>R$ " & FORMAT ( IF ( ISBLANK ( _RowM21 ), 0, _RowM21 ), "#,0" ) & "</span></td></tr>"
+        VAR _Rows2 =
+            CONCATENATEX (
+                _Nivel2,
+                VAR _Cfg1 = dim_estrutura[config_1]
+                VAR _Cells2 =
+                    CONCATENATEX (
+                        _ParesColuna,
+                        VAR _G = [Grupo]
+                        VAR _S = [Sub]
+                        VAR _Qtd = CALCULATE ( [Qtd Realizada (matriz)], dim_estrutura[config_2] = _G, dim_estrutura[config_3] = _S )
+                        VAR _M2 = CALCULATE ( AVERAGE ( dim_estrutura[m2_praticado] ), dim_estrutura[config_2] = _G, dim_estrutura[config_3] = _S )
+                        VAR _dQtd = IF ( ISBLANK ( _Qtd ), 0, _Qtd )
+                        VAR _dM2 = IF ( ISBLANK ( _M2 ), 0, _M2 )
+                        VAR _Ratio = DIVIDE ( _M2 - _Min, _Diff )
+                        VAR _Cor = SWITCH ( TRUE (), _dQtd = 0, _CorZero, _Ratio >= 0.9, _Verde5, _Ratio >= 0.7, _Verde4, _Ratio >= 0.5, _Verde3, _Ratio >= 0.2, _Verde2, _Verde1 )
+                        RETURN "<td><span class='qtd-val'>" & _dQtd & "</span><span class='m2-val'>R$ " & FORMAT ( _dM2, "#,0" ) & "</span><div class='bar-container'><div class='bar-fill' style='background-color:" & _Cor & "'></div></div></td>",
+                        "", [Grupo], ASC, [OrdemSub], ASC
+                    )
+                VAR _RowQtd2 = [Qtd Realizada (matriz)]
+                VAR _RowM22 = CALCULATE ( AVERAGE ( dim_estrutura[m2_praticado] ) )
+                RETURN "<tr class='lvl2'><td class='row-label lvl2'>" & _Cfg1 & "</td>" & _Cells2 & "<td class='total-col'><span class='qtd-val'>" & IF ( ISBLANK ( _RowQtd2 ), 0, _RowQtd2 ) & "</span><span class='m2-val'>R$ " & FORMAT ( IF ( ISBLANK ( _RowM22 ), 0, _RowM22 ), "#,0" ) & "</span></td></tr>",
+                "", dim_estrutura[config_1], ASC
+            )
+        RETURN _Row1 & _Rows2,
+        "", dim_estrutura[produto], ASC, dim_estrutura[bloco], ASC
+    )
+VAR _Footer = "<tr class='footer-total'><td class='row-label' style='color:white'>TOTAL</td>" & CONCATENATEX ( _ParesColuna,
+        VAR _G = [Grupo]
+        VAR _S = [Sub]
+        VAR _Qtd = CALCULATE ( [Qtd Realizada (matriz)], dim_estrutura[config_2] = _G, dim_estrutura[config_3] = _S )
+        VAR _M2 = CALCULATE ( AVERAGE ( dim_estrutura[m2_praticado] ), dim_estrutura[config_2] = _G, dim_estrutura[config_3] = _S )
+        RETURN "<td><span class='qtd-val' style='color:white'>" & IF ( ISBLANK ( _Qtd ), 0, _Qtd ) & "</span><span class='m2-val' style='color:#CCC'>R$ " & FORMAT ( IF ( ISBLANK ( _M2 ), 0, _M2 ), "#,0" ) & "</span></td>",
+        "", [Grupo], ASC, [OrdemSub], ASC ) & "<td><span class='qtd-val' style='color:white'>" & IF ( ISBLANK ( [Qtd Realizada (matriz)] ), 0, [Qtd Realizada (matriz)] ) & "</span><span class='m2-val' style='color:#CCC'>R$ " & FORMAT ( [M² Médio Realizado (matriz)], "#,0" ) & "</span></td></tr>"
+RETURN _CSS & _Topo & _TableStart & _RowsBody & _Footer & "</tbody></table></div>"
+
+
+// -----------------------------------------------------------------------------
+// 6.2 MATRIZ "M² A REALIZAR (ESTOQUE)" POR BLOCO — DRILL DOWN
+// Mesma estrutura de 6.1 — só troca [Qtd Realizada (matriz)] por [Estoque Qtd]
+// e AVERAGE(m2_praticado) por [M²ARealizar]. Como M²ARealizar já é medida, os
+// totais de linha/subtotal (_RowM2*) não precisam de CALCULATE explícito (uma
+// medida referenciada já transita sozinha — comentário no topo do arquivo); só
+// os _CelulasRange e as células com filtro de config_2/config_3 usam CALCULATE,
+// porque aí ele também serve para aplicar o filtro, não só para transition.
+// -----------------------------------------------------------------------------
+Matriz M² A Realizar por Bloco HTML =
+VAR _e = 3.87
+VAR _CorPrincipal = "#003254"
+VAR _CorGrupo2 = "#2C5F7C"
+VAR _CorZero = "#E0E0E0"
+VAR _Verde1 = "#E8F5E9"
+VAR _Verde2 = "#C8E6C9"
+VAR _Verde3 = "#A5D6A7"
+VAR _Verde4 = "#66BB6A"
+VAR _Verde5 = "#00C36B"
+VAR _ParesColuna = ADDCOLUMNS ( FILTER ( SELECTCOLUMNS ( CALCULATETABLE ( SUMMARIZE ( dim_estrutura, dim_estrutura[config_2], dim_estrutura[config_3] ), ALLSELECTED ( dim_estrutura[config_2] ), ALLSELECTED ( dim_estrutura[config_3] ) ), "Grupo", dim_estrutura[config_2], "Sub", dim_estrutura[config_3] ), NOT ISBLANK ( [Grupo] ) && NOT ISBLANK ( [Sub] ) ), "OrdemSub", IFERROR ( VALUE ( LEFT ( [Sub], FIND ( " ", [Sub] & " " ) - 1 ) ), 999999 ) )
+VAR _Grupos = DISTINCT ( SELECTCOLUMNS ( _ParesColuna, "Grupo", [Grupo] ) )
+VAR _nCols = COUNTROWS ( _ParesColuna )
+VAR _vertical = _nCols > 12
+VAR _fsTh = IF ( _nCols <= 8, 10, IF ( _nCols <= 14, 8, 7 ) ) * _e
+VAR _fsQtd = IF ( _nCols <= 8, 15, IF ( _nCols <= 14, 12, 10 ) ) * _e
+VAR _fsM2 = IF ( _nCols <= 8, 9, IF ( _nCols <= 14, 8, 7 ) ) * _e
+VAR _thCls = IF ( _vertical, " class='rot'", "" )
+VAR _Nivel1 = SUMMARIZE ( dim_estrutura, dim_estrutura[produto], dim_estrutura[bloco] )
+VAR _CelulasRange = ADDCOLUMNS ( SUMMARIZE ( dim_estrutura, dim_estrutura[produto], dim_estrutura[bloco], dim_estrutura[config_1], dim_estrutura[config_2], dim_estrutura[config_3] ), "@v", CALCULATE ( [M²ARealizar] ) )
+VAR _Max = MAXX ( _CelulasRange, [@v] )
+VAR _Min = MINX ( FILTER ( _CelulasRange, [@v] > 0 ), [@v] )
+VAR _Diff = _Max - _Min
+VAR _CSS = "<style> html,body { margin:0; padding:0; } .container { font-family:'Segoe UI',sans-serif; padding:" & FORMAT(5*_e,"0") & "px; background:white; width:100%; box-sizing:border-box; overflow-x:auto; } .title-area { text-align:center; margin-bottom:" & FORMAT(10*_e,"0") & "px; } .title { color:" & _CorPrincipal & "; font-size:" & FORMAT(18*_e,"0") & "px; font-weight:800; text-transform:uppercase; margin:0; } .pafil-matrix { border-collapse:collapse; font-size:" & FORMAT(11*_e,"0") & "px; width:100%; } .pafil-matrix th { background-color:" & _CorPrincipal & "; color:white; font-size:" & FORMAT(_fsTh,"0") & "px; font-weight:600; padding:" & FORMAT(6*_e,"0") & "px " & FORMAT(4*_e,"0") & "px; text-align:center; border:none; line-height:1.25; white-space:nowrap; vertical-align:bottom; } .pafil-matrix thead tr:last-child th { background-color:" & _CorGrupo2 & "; } .pafil-matrix th.rot { writing-mode:vertical-rl; transform:rotate(180deg); padding:" & FORMAT(8*_e,"0") & "px " & FORMAT(3*_e,"0") & "px; } .pafil-matrix thead tr:first-child th:first-child { border-radius:" & FORMAT(8*_e,"0") & "px 0 0 0; text-align:left; padding-left:" & FORMAT(10*_e,"0") & "px; min-width:16ch; max-width:30ch; white-space:normal; vertical-align:middle; } .pafil-matrix thead tr:first-child th:last-child { border-radius:0 " & FORMAT(8*_e,"0") & "px 0 0; vertical-align:middle; } .pafil-matrix td { padding:" & FORMAT(6*_e,"0") & "px " & FORMAT(4*_e,"0") & "px; border-bottom:" & FORMAT(1*_e,"0") & "px solid #EEE; text-align:center; line-height:1.2; white-space:nowrap; } .pafil-matrix td.row-label { text-align:left !important; font-weight:bold; color:#333; font-size:" & FORMAT(10*_e,"0") & "px; padding-left:" & FORMAT(10*_e,"0") & "px !important; white-space:normal; word-break:normal; overflow-wrap:break-word; max-width:30ch; } .pafil-matrix tr.lvl1 { background-color:#EAF0F4; border-top:" & FORMAT(2*_e,"0") & "px solid #D3DDE3; } .pafil-matrix tr.lvl2 { background-color:#FFFFFF; } .pafil-matrix td.row-label.lvl1 { font-weight:800; color:#0F1E27; font-size:" & FORMAT(10.5*_e,"0") & "px; padding-left:" & FORMAT(10*_e,"0") & "px !important; } .pafil-matrix td.row-label.lvl2 { font-weight:700; color:#3A4750; font-size:" & FORMAT(9.5*_e,"0") & "px; padding-left:" & FORMAT(22*_e,"0") & "px !important; } .qtd-val { font-weight:800; font-size:" & FORMAT(_fsQtd,"0") & "px; color:" & _CorPrincipal & "; display:block; } .m2-val { font-size:" & FORMAT(_fsM2,"0") & "px; color:#666; font-weight:bold; white-space:nowrap; } .footer-total { background-color:" & _CorPrincipal & " !important; color:white !important; font-weight:bold; } .footer-total td { border:none; color:white; padding:" & FORMAT(8*_e,"0") & "px " & FORMAT(4*_e,"0") & "px; } .bar-container { width:100%; height:" & FORMAT(4*_e,"0") & "px; background:#F0F0F0; border-radius:" & FORMAT(2*_e,"0") & "px; margin-top:" & FORMAT(4*_e,"0") & "px; overflow:hidden; } .bar-fill { height:100%; width:100%; border-radius:" & FORMAT(2*_e,"0") & "px; } .total-col { font-weight:800; background-color:rgba(0,50,84,0.05); } </style>"
+VAR _Topo = "<div class='container'><div class='title-area'><h1 class='title'>M² A Realizar (Estoque)</h1></div>"
+VAR _TableStart =
+    "<table class='pafil-matrix'><thead><tr><th rowspan='2'>PRODUTO / BLOCO / POSIÇÃO</th>" &
+    CONCATENATEX (
+        _Grupos,
+        VAR _G = [Grupo]
+        VAR _Span = COUNTROWS ( FILTER ( _ParesColuna, [Grupo] = _G ) )
+        RETURN "<th colspan='" & _Span & "'>" & _G & "</th>",
+        "", [Grupo], ASC
+    ) &
+    "<th rowspan='2'>TOTAL</th></tr><tr>" &
+    CONCATENATEX (
+        _ParesColuna,
+        "<th" & _thCls & ">" & IF ( _vertical && LEN ( [Sub] ) > 28, LEFT ( [Sub], 27 ) & "…", [Sub] ) & "</th>",
+        "", [Grupo], ASC, [OrdemSub], ASC
+    ) &
+    "</tr></thead><tbody>"
+VAR _RowsBody =
+    CONCATENATEX (
+        _Nivel1,
+        VAR _Prod = dim_estrutura[produto]
+        VAR _Bloco = dim_estrutura[bloco]
+        VAR _Rotulo1 = _Prod & IF ( ISBLANK ( _Bloco ), "", " - " & _Bloco )
+        VAR _Nivel2 = CALCULATETABLE ( FILTER ( SUMMARIZE ( dim_estrutura, dim_estrutura[config_1] ), NOT ISBLANK ( dim_estrutura[config_1] ) ) )
+        VAR _Cells1 =
+            CONCATENATEX (
+                _ParesColuna,
+                VAR _G = [Grupo]
+                VAR _S = [Sub]
+                VAR _Qtd = CALCULATE ( [Estoque Qtd], dim_estrutura[config_2] = _G, dim_estrutura[config_3] = _S )
+                VAR _M2 = CALCULATE ( [M²ARealizar], dim_estrutura[config_2] = _G, dim_estrutura[config_3] = _S )
+                VAR _dQtd = IF ( ISBLANK ( _Qtd ), 0, _Qtd )
+                VAR _dM2 = IF ( ISBLANK ( _M2 ), 0, _M2 )
+                VAR _Ratio = DIVIDE ( _M2 - _Min, _Diff )
+                VAR _Cor = SWITCH ( TRUE (), _dQtd = 0, _CorZero, _Ratio >= 0.9, _Verde5, _Ratio >= 0.7, _Verde4, _Ratio >= 0.5, _Verde3, _Ratio >= 0.2, _Verde2, _Verde1 )
+                RETURN "<td><span class='qtd-val'>" & _dQtd & "</span><span class='m2-val'>R$ " & FORMAT ( _dM2, "#,0" ) & "</span><div class='bar-container'><div class='bar-fill' style='background-color:" & _Cor & "'></div></div></td>",
+                "", [Grupo], ASC, [OrdemSub], ASC
+            )
+        VAR _RowQtd1 = [Estoque Qtd]
+        VAR _RowM21 = [M²ARealizar]
+        VAR _Row1 = "<tr class='lvl1'><td class='row-label lvl1'>" & _Rotulo1 & "</td>" & _Cells1 & "<td class='total-col'><span class='qtd-val'>" & IF ( ISBLANK ( _RowQtd1 ), 0, _RowQtd1 ) & "</span><span class='m2-val'>R$ " & FORMAT ( IF ( ISBLANK ( _RowM21 ), 0, _RowM21 ), "#,0" ) & "</span></td></tr>"
+        VAR _Rows2 =
+            CONCATENATEX (
+                _Nivel2,
+                VAR _Cfg1 = dim_estrutura[config_1]
+                VAR _Cells2 =
+                    CONCATENATEX (
+                        _ParesColuna,
+                        VAR _G = [Grupo]
+                        VAR _S = [Sub]
+                        VAR _Qtd = CALCULATE ( [Estoque Qtd], dim_estrutura[config_2] = _G, dim_estrutura[config_3] = _S )
+                        VAR _M2 = CALCULATE ( [M²ARealizar], dim_estrutura[config_2] = _G, dim_estrutura[config_3] = _S )
+                        VAR _dQtd = IF ( ISBLANK ( _Qtd ), 0, _Qtd )
+                        VAR _dM2 = IF ( ISBLANK ( _M2 ), 0, _M2 )
+                        VAR _Ratio = DIVIDE ( _M2 - _Min, _Diff )
+                        VAR _Cor = SWITCH ( TRUE (), _dQtd = 0, _CorZero, _Ratio >= 0.9, _Verde5, _Ratio >= 0.7, _Verde4, _Ratio >= 0.5, _Verde3, _Ratio >= 0.2, _Verde2, _Verde1 )
+                        RETURN "<td><span class='qtd-val'>" & _dQtd & "</span><span class='m2-val'>R$ " & FORMAT ( _dM2, "#,0" ) & "</span><div class='bar-container'><div class='bar-fill' style='background-color:" & _Cor & "'></div></div></td>",
+                        "", [Grupo], ASC, [OrdemSub], ASC
+                    )
+                VAR _RowQtd2 = [Estoque Qtd]
+                VAR _RowM22 = [M²ARealizar]
+                RETURN "<tr class='lvl2'><td class='row-label lvl2'>" & _Cfg1 & "</td>" & _Cells2 & "<td class='total-col'><span class='qtd-val'>" & IF ( ISBLANK ( _RowQtd2 ), 0, _RowQtd2 ) & "</span><span class='m2-val'>R$ " & FORMAT ( IF ( ISBLANK ( _RowM22 ), 0, _RowM22 ), "#,0" ) & "</span></td></tr>",
+                "", dim_estrutura[config_1], ASC
+            )
+        RETURN _Row1 & _Rows2,
+        "", dim_estrutura[produto], ASC, dim_estrutura[bloco], ASC
+    )
+VAR _Footer = "<tr class='footer-total'><td class='row-label' style='color:white'>TOTAL</td>" & CONCATENATEX ( _ParesColuna,
+        VAR _G = [Grupo]
+        VAR _S = [Sub]
+        VAR _Qtd = CALCULATE ( [Estoque Qtd], dim_estrutura[config_2] = _G, dim_estrutura[config_3] = _S )
+        VAR _M2 = CALCULATE ( [M²ARealizar], dim_estrutura[config_2] = _G, dim_estrutura[config_3] = _S )
+        RETURN "<td><span class='qtd-val' style='color:white'>" & IF ( ISBLANK ( _Qtd ), 0, _Qtd ) & "</span><span class='m2-val' style='color:#CCC'>R$ " & FORMAT ( IF ( ISBLANK ( _M2 ), 0, _M2 ), "#,0" ) & "</span></td>",
+        "", [Grupo], ASC, [OrdemSub], ASC ) & "<td><span class='qtd-val' style='color:white'>" & IF ( ISBLANK ( [Estoque Qtd] ), 0, [Estoque Qtd] ) & "</span><span class='m2-val' style='color:#CCC'>R$ " & FORMAT ( [M²ARealizar], "#,0" ) & "</span></td></tr>"
+RETURN _CSS & _Topo & _TableStart & _RowsBody & _Footer & "</tbody></table></div>"
+
+
 // Uso:
 //   Página "Carteira"  (sem slicer) -> Matriz M² Realizado HTML / A Realizar HTML
-//   Página "Produto"   (com slicer) -> ...por Bloco HTML
+//   Página "Produto"   (com slicer) -> ...por Bloco HTML (drill down)

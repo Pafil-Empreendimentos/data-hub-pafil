@@ -56,6 +56,8 @@ Marque, dentro do schema `gold`:
 | `dim_corretor` | traz os atributos de cada corretor |
 | `fato_leads` | o funil de marketing, cruzando leads com mídia e origem |
 | `fato_precadastros` | o funil de crédito, com os pré-cadastros |
+| `dim_corretor_headcount` | o quadro do backoffice: corretor, equipe, regional, a flag `eh_ativo`, as datas de entrada e saída e o tempo de casa em meses. É a dimensão que dá as linhas da página Performance. Carrega ativos e desligados, então em slicer de corretor filtre `eh_ativo` |
+| `fato_headcount_mensal` | a série de meses ativos por corretor (DP-16), denominador das medidas por mês e insumo do farol |
 
 > A gold entrega apenas fatos e dimensões. Rankings, Vendas por Mídia, a esteira e
 > os demais agregados são montados diretamente no Power BI, como medidas e
@@ -179,13 +181,33 @@ antes de começar a montar os visuais.
 > "Relatório Web" do CVCRM (`relatorios_precadastro.xlsx`), através do comando
 > `popular_seeds.py --credito-manual`. A API do CVDW não traz essas duas colunas.
 
-**Ficou de fora do escopo, por falta de uma fonte de dados** (as notas completas
-estão no próprio arquivo `.dax`):
-- "Pastas por Corretor (House)" comparando com o headcount mensal (uma linha
-  comparando `Qtd Pastas` com o headcount daquele mês). Falta a série mensal do
-  de-para de headcount (data, regional, headcount); esse de-para já está listado
-  em `config/deparas.yml`, mas ainda não tem um loader nem uma tabela silver
-  correspondente.
+**Resolvido em setembro de 2026** (era a única pendência de fonte de dados desta
+página): "Pastas por Corretor (House)" comparando com o headcount mensal. A série
+mensal do headcount agora existe, como DP-16
+(`silver.dpara_corretor_headcount_mensal` e `gold.fato_headcount_mensal`), com
+loader no `popular_seeds.py`. Para montar a linha de comparação, use `[Qtd
+Pastas]` contra `[Corretores Ativos]`, ou `[Pasta/Mês]` se a leitura desejada for
+a média por corretor. As duas medidas estão em `MEDIDAS_PERFORMANCE.dax`.
+
+---
+
+### A página "Performance" (produtividade do corretor e farol de vendas)
+
+É a reimplementação da página "Performance" do BI Matriz legado: a matriz de
+corretores com as métricas de esteira mês a mês, o farol de recência de venda e a
+matriz de vendas por gerente. As medidas estão em
+[`MEDIDAS_PERFORMANCE.dax`](MEDIDAS_PERFORMANCE.dax), e o passo a passo completo
+da montagem, com os campos de cada visual e as diferenças deliberadas em relação
+ao legado, está em [`PAGINA_PERFORMANCE.md`](PAGINA_PERFORMANCE.md).
+
+Dois pontos que costumam gerar dúvida ao montar:
+
+1. As linhas da matriz vêm de `dim_corretor_headcount`, não da fato. Corretor que
+   não vendeu no mês precisa continuar aparecendo, porque é exatamente ele que o
+   farol existe para mostrar.
+2. `fato_headcount_mensal` se relaciona apenas com `dim_corretor_headcount`, por
+   `corretor_chave`. Não crie relacionamento dela com `dim_calendario`: a ponte de
+   tempo é feita por `TREATAS` dentro da medida `[Meses Ativos]`.
 
 ---
 

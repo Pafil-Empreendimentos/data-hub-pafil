@@ -1,0 +1,308 @@
+// =============================================================================
+// Medidas DAX — página "Performance" (produtividade do corretor), sobre a GOLD.
+//
+// Reimplementação da página "Performance" do BI Matriz legado (6 visuais, lidos de
+// _bi_ref/matriz_report.json): a matriz "Corretores" (Nome × Mês, com o farol na
+// última coluna), a matriz "Vendas x Gerentes" (Gerente > Corretor × Nome do Mês),
+// os cards do topo e a legenda do farol.
+//
+// O que o legado tinha e a v3 não tinha: as medidas normalizadas "por mês"
+// (Ativo/Mês, Receptivo/Mês, Pasta/Mês, Vendas/Mês) e o "Farol Vendas". As duas
+// coisas dependem de UM insumo que faltava na pipeline — quantos meses cada
+// corretor esteve ativo. No legado isso eram duas colunas fixas da planilha de
+// headcount ("Meses Ativos 2024" e "Meses Ativos 2025", somadas no código); aqui
+// virou série mensal de verdade: DP-16, silver.dpara_corretor_headcount_mensal ->
+// gold.fato_headcount_mensal.
+//
+// Tabelas usadas: fato_headcount_mensal (nova), dim_corretor_headcount,
+// fato_reservas, fato_leads, fato_precadastros, dim_calendario.
+//
+// dim_corretor_headcount mudou em 10/set/2026 (DP-12): ganhou 4 colunas — `eh_ativo`,
+// `dt_contratacao`, `dt_desligamento` e `meses_de_casa` — e passou a carregar o quadro
+// inteiro do backoffice (258 nomes), não só os ativos. Se a tabela já estava importada
+// no seu .pbix antes disso, ela NÃO vai mostrar as colunas novas sozinha: é preciso
+// abrir o Editor do Power Query, marcar as quatro na etapa de seleção de colunas da
+// consulta e só então Atualizar (mesma pegadinha que segurou `documento_chave`/
+// `valor_prestacao` em fato_precadastros, registrada no MODELO_SEMANTICO.md). Sem
+// elas, [Meses de Casa] devolve BLANK e o farol cai no plano B, os meses ativos da
+// série de DP-16.
+//
+// Relacionamentos exigidos:
+//   dim_corretor_headcount[corretor_chave] 1─* fato_headcount_mensal[corretor_chave]
+//   dim_corretor_headcount[corretor_chave] 1─* fato_reservas / fato_leads /
+//                                              fato_precadastros [corretor_chave]
+// NÃO criar relacionamento entre dim_calendario e fato_headcount_mensal: a ponte de
+// tempo é o TREATAS por `ano_mes` dentro de [Meses Ativos]. Com relacionamento
+// físico o filtro só pegaria quando o dia 1 do mês estivesse selecionado (um slicer
+// de "10 a 20 de setembro" zeraria o denominador) e ainda abriria caminho ambíguo
+// com as três fatos.
+//
+// Medidas reaproveitadas (já existem no modelo, não recriar):
+//   [Qtd Prospect]                  MEDIDAS_LEADS.dax
+//   [Qtd Pastas]                    MEDIDAS_PRECADASTROS.dax
+//   [QTD Vendas (incl. distratadas)] MEDIDAS_GOLD.dax  (é o "Qtd Vendas 2" legado)
+//   [VGV Bruto]                     MEDIDAS_GOLD.dax
+// =============================================================================
+
+
+// ---- 1. Headcount: o denominador de tudo ------------------------------------
+
+// Meses-corretor ativos dentro do período filtrado (KPI-38). Com um corretor no
+// contexto (linha da matriz), é "quantos meses ele esteve na casa no período"; no
+// total da matriz, é a soma do time, que é exatamente o denominador certo para a
+// linha de total das medidas "por mês".
+//
+// A ponte com o calendário é o TREATAS: pega os meses tocados pelo filtro de data
+// (mesmo que só um dia daquele mês esteja selecionado) e joga em fato_headcount_
+// mensal[ano_mes]. Sem filtro de data nenhum, VALUES devolve o calendário inteiro e
+// a medida soma a série toda — por isso a página tem que ter o slicer de ano/mês.
+Meses Ativos =
+VAR _mesesFiltrados = VALUES ( dim_calendario[ano_mes] )
+RETURN
+    CALCULATE (
+        SUM ( fato_headcount_mensal[ativo] ),
+        TREATAS ( _mesesFiltrados, fato_headcount_mensal[ano_mes] )
+    )
+
+// Quantos corretores estiveram ativos no período (para o card do topo e para a
+// leitura por equipe: 15 corretores × 9 meses = 135 meses-corretor).
+Corretores Ativos =
+VAR _mesesFiltrados = VALUES ( dim_calendario[ano_mes] )
+RETURN
+    CALCULATE (
+        DISTINCTCOUNT ( fato_headcount_mensal[corretor_chave] ),
+        TREATAS ( _mesesFiltrados, fato_headcount_mensal[ano_mes] ),
+        fato_headcount_mensal[ativo] = 1
+    )
+
+
+// ---- 2. Leads por tipo de prospecção (nomeadas) -----------------------------
+// Hoje essa lógica só existe INLINE dentro de [KPIs Leads HTML] (VARs _ativos e
+// _receptivos). A matriz de corretores precisa delas como medida nomeada, então
+// aqui elas viram medida de verdade — é o caminho que a própria nota do
+// MEDIDAS_LEADS.dax pede ("prefira recriá-las em vez de duplicar a lógica").
+// Se já existirem no seu modelo com esse nome, não recrie: só confira a fórmula.
+Qtd Ativo =
+CALCULATE ( DISTINCTCOUNT ( fato_leads[id_lead] ), fato_leads[atv/recept 2] = "Ativo" )
+
+Qtd Receptivo =
+CALCULATE ( DISTINCTCOUNT ( fato_leads[id_lead] ), fato_leads[atv/recept 2] = "Receptivo" )
+
+
+// ---- 3. Produtividade por mês ativo -----------------------------------------
+// KPI-39. Divergência conhecida contra o legado, e é uma correção deliberada: lá o
+// numerador vinha com REMOVEFILTERS(d_calendario) (ou seja, ignorava o filtro de
+// período da página) e o denominador era sempre "Meses Ativos 2024 + 2025", dois
+// anos fixos no código. O resultado era uma média que não obedecia ao slicer e que
+// ficava errada assim que 2026 começou. Aqui numerador e denominador olham a MESMA
+// janela: o que o filtro da página estiver mandando.
+Prospect/Mês  = DIVIDE ( [Qtd Prospect], [Meses Ativos] )
+
+Ativo/Mês     = DIVIDE ( [Qtd Ativo], [Meses Ativos] )
+
+Receptivo/Mês = DIVIDE ( [Qtd Receptivo], [Meses Ativos] )
+
+Pasta/Mês     = DIVIDE ( [Qtd Pastas], [Meses Ativos] )
+
+Vendas/Mês    = DIVIDE ( [QTD Vendas (incl. distratadas)], [Meses Ativos] )
+
+VGV/Mês       = DIVIDE ( [VGV Bruto], [Meses Ativos] )
+
+
+// ---- 4. Conversões da esteira do corretor -----------------------------------
+// Os nomes legados são enganosos: "Lead/Pasta" divide pastas por prospects e
+// "Pasta/Venda" divide vendas por pastas. Ficam com o nome que a página nova já
+// usa (o que se lê é o que a conta faz); o nome legado está no comentário para
+// quem for comparar os dois relatórios lado a lado.
+Pasta/Prospect = DIVIDE ( [Qtd Pastas], [Qtd Prospect] )                    // legado: "Lead/Pasta"
+
+Vendas/Pastas  = DIVIDE ( [QTD Vendas (incl. distratadas)], [Qtd Pastas] )  // legado: "Pasta/Venda"
+
+
+// ---- 5. Farol de vendas ------------------------------------------------------
+// KPI-40. Semáforo de recência de venda por corretor, na última coluna da matriz:
+//   🟢 vendeu no mês atual ou no anterior
+//   🟡 vendeu no mês retrasado
+//   🔴 mais de 2 meses sem vender
+//   ⚪ não apto: entrada recente sem venda (até 1 mês COMPLETO de casa), ou já
+//      desligado na data de referência
+//   (vazio) desligado que também não teve movimento no período — sem farol a linha
+//      dele some da matriz, que é o que se quer
+// "Venda" aqui é a definição larga (Vendida ∪ Distrato, o "Qtd Vendas 2" do legado,
+// KPI-08): quem vendeu e depois teve distrato trabalhou, e o farol mede atividade
+// comercial, não VGV líquido.
+//
+// Diferença deliberada contra o legado (3 ajustes):
+//  1. Data de referência: o legado usava MAX(d_calendario[Data]) puro, então com a
+//     página filtrada no ano inteiro a referência virava 31/dez e TODO mundo ficava
+//     vermelho de janeiro a novembro. Aqui a referência é limitada por TODAY(): com
+//     o ano inteiro selecionado o farol fala do mês corrente, e com um mês passado
+//     selecionado ele mostra a foto daquela época.
+//  2. "Entrada recente": o legado lia SELECTEDVALUE(f_headcount[Meses Ativos 2025]),
+//     uma coluna de ano fixo que envelheceu. Aqui é tempo de casa de verdade, da data
+//     de contratação do headcount (ver [Meses de Casa]), com a série mensal de DP-16
+//     como plano B para quem está sem data na planilha.
+//  3. Saída: corretor que já tinha saído na data de referência fica branco em vez de
+//     vermelho, e some da matriz se também não teve movimento no período. O legado
+//     não tinha esse caso porque não olhava a data de saída em lugar nenhum — e nem
+//     precisava, já que a dimensão dele era a planilha inteira desde sempre.
+
+// Tempo de casa do corretor, em meses COMPLETOS, até a data de referência da página
+// (KPI-42). Vem de dim_corretor_headcount[dt_contratacao], que é o começo do vínculo
+// CORRENTE: corretor recontratado conta a partir da volta, não da primeira passagem.
+// Conta em meses de calendário (quem entrou em 20/08 tem 1 mês em qualquer dia de
+// setembro), que é como o backoffice lê a planilha e como a série de DP-16 é montada,
+// e nunca fica negativo — com a página filtrada num mês anterior à contratação, o
+// corretor tem zero mês de casa. É a mesma conta da coluna `meses_de_casa` da view.
+Meses de Casa =
+VAR _ref = MIN ( MAX ( dim_calendario[data] ), TODAY () )
+VAR _entrada = MIN ( dim_corretor_headcount[dt_contratacao] )
+VAR _saida = MIN ( dim_corretor_headcount[dt_desligamento] )
+// para quem já saiu, o relógio parou na saída: senão o desligado de 2023 apareceria
+// hoje com 3 anos de casa
+VAR _fim = IF ( NOT ISBLANK ( _saida ) && _saida < _ref, _saida, _ref )
+RETURN
+    IF (
+        NOT ISBLANK ( _entrada ),
+        MAX ( DATEDIFF ( EOMONTH ( _entrada, -1 ) + 1,
+                         DATE ( YEAR ( _fim ), MONTH ( _fim ), 1 ), MONTH ), 0 )
+    )
+
+Meses Ativos no Ano =
+VAR _ref = MIN ( MAX ( dim_calendario[data] ), TODAY () )
+VAR _iniAno = DATE ( YEAR ( _ref ), 1, 1 )
+VAR _mesRef = DATE ( YEAR ( _ref ), MONTH ( _ref ), 1 )
+RETURN
+    CALCULATE (
+        SUM ( fato_headcount_mensal[ativo] ),
+        // limpa só os filtros diretos na fato (o de corretor vem da dimensão pelo
+        // relacionamento e continua valendo)
+        REMOVEFILTERS ( fato_headcount_mensal ),
+        fato_headcount_mensal[mes] >= _iniAno,
+        fato_headcount_mensal[mes] <= _mesRef
+    )
+
+Farol Vendas =
+VAR _ref = MIN ( MAX ( dim_calendario[data] ), TODAY () )
+VAR _iniAtual = DATE ( YEAR ( _ref ), MONTH ( _ref ), 1 )
+VAR _fimAtual = EOMONTH ( _iniAtual, 0 )
+VAR _iniAnterior = EDATE ( _iniAtual, -1 )
+VAR _fimAnterior = EOMONTH ( _iniAnterior, 0 )
+VAR _iniRetrasado = EDATE ( _iniAtual, -2 )
+VAR _fimRetrasado = EOMONTH ( _iniRetrasado, 0 )
+VAR _vendasAtual =
+    CALCULATE (
+        [QTD Vendas (incl. distratadas)],
+        REMOVEFILTERS ( dim_calendario ),
+        DATESBETWEEN ( dim_calendario[data], _iniAtual, _fimAtual )
+    )
+VAR _vendasAnterior =
+    CALCULATE (
+        [QTD Vendas (incl. distratadas)],
+        REMOVEFILTERS ( dim_calendario ),
+        DATESBETWEEN ( dim_calendario[data], _iniAnterior, _fimAnterior )
+    )
+VAR _vendasRetrasado =
+    CALCULATE (
+        [QTD Vendas (incl. distratadas)],
+        REMOVEFILTERS ( dim_calendario ),
+        DATESBETWEEN ( dim_calendario[data], _iniRetrasado, _fimRetrasado )
+    )
+VAR _vendasPeriodo = [QTD Vendas (incl. distratadas)]
+// Tempo de casa manda. Sem data de contratação na planilha, cai para os meses ativos
+// da série de DP-16, que era o insumo único antes das datas entrarem no headcount — o
+// "-1" ali é porque a série conta o mês de entrada como mês 1, e o critério aqui é
+// mês COMPLETO de casa (as duas contas passam a dizer a mesma coisa).
+VAR _mesesCasa =
+    IF ( NOT ISBLANK ( [Meses de Casa] ), [Meses de Casa], [Meses Ativos no Ano] - 1 )
+// já tinha saído na data de referência da página. O "<= _ref" importa: olhando janeiro,
+// quem saiu em agosto ainda estava na casa e tem que ser avaliado normalmente.
+VAR _saida = MIN ( dim_corretor_headcount[dt_desligamento] )
+VAR _saiu = NOT ISBLANK ( _saida ) && _saida <= _ref
+// desligado que também não teve movimento nenhum no período não merece nem linha na
+// matriz: BLANK em todas as medidas é o que faz o Power BI esconder a linha sozinho.
+// É por isso que a dimensão pode carregar o quadro inteiro sem encher a tela de gente
+// que saiu em 2023 (ver nota 2 no fim do arquivo).
+VAR _semNadaNoPeriodo =
+    _vendasPeriodo = 0 && [Qtd Prospect] = 0 && [Qtd Pastas] = 0
+RETURN
+    // farol é por corretor: na linha de total da matriz não significa nada
+    IF (
+        NOT HASONEVALUE ( dim_corretor_headcount[corretor_chave] ),
+        BLANK (),
+        SWITCH (
+            TRUE (),
+            _saiu && _semNadaNoPeriodo, BLANK (),
+            // desligado com data já lançada não entra na cobrança do time, mas continua
+            // aparecendo com os números dele, que é o que faz o Total fechar
+            _saiu, "⚪",
+            // entrada recente: 2 meses de calendário de tolerância (o mês em que
+            // entrou e o seguinte). Trocar o "<= 1" é o único ajuste necessário se a
+            // gestão quiser a régua mais curta ou mais longa.
+            _mesesCasa <= 1 && _vendasPeriodo = 0, "⚪",
+            _vendasAtual > 0 || _vendasAnterior > 0, "🟢",
+            _vendasRetrasado > 0, "🟡",
+            "🔴"
+        )
+    )
+
+// Para ordenar a matriz pelo farol (quem precisa de atenção primeiro) e para
+// filtrar/contar por cor. Ordem: 1 vermelho, 2 amarelo, 3 verde, 4 branco.
+Farol Ordem =
+SWITCH ( [Farol Vendas], "🔴", 1, "🟡", 2, "🟢", 3, "⚪", 4 )
+
+// Card "corretores no vermelho": quantos corretores estão há mais de 2 meses sem
+// vender. Itera a dimensão porque o farol só existe no grão do corretor.
+Corretores no Vermelho =
+COUNTROWS (
+    FILTER (
+        VALUES ( dim_corretor_headcount[corretor_chave] ),
+        [Farol Vendas] = "🔴"
+    )
+)
+
+// Meses desde a última venda — o número por trás da cor, bom como tooltip da
+// coluna do farol. BLANK quando o corretor nunca vendeu.
+Meses Sem Vender =
+VAR _ref = MIN ( MAX ( dim_calendario[data] ), TODAY () )
+VAR _ultimaVenda =
+    CALCULATE (
+        MAX ( fato_reservas[data_venda] ),
+        REMOVEFILTERS ( dim_calendario ),
+        fato_reservas[eh_venda_ou_distrato] = TRUE (),
+        fato_reservas[data_venda] <= _ref
+    )
+RETURN
+    IF (
+        ISBLANK ( _ultimaVenda ),
+        BLANK (),
+        DATEDIFF ( EOMONTH ( _ultimaVenda, -1 ) + 1, DATE ( YEAR ( _ref ), MONTH ( _ref ), 1 ), MONTH )
+    )
+
+
+// -----------------------------------------------------------------------------
+// NOTAS
+// 1. A matriz de corretores lista as LINHAS a partir de dim_corretor_headcount
+//    (o roster do backoffice), não da fato: corretor que não vendeu no mês precisa
+//    continuar aparecendo — é justamente ele que o farol existe para mostrar.
+// 2. dim_corretor_headcount carrega o QUADRO INTEIRO desde 10/set/2026: 258 nomes,
+//    ativos e desligados, com a coluna `eh_ativo`. Antes eram só os ativos, e quem
+//    saía no meio do ano perdia a linha da matriz enquanto as vendas dele continuavam
+//    no Total, pela linha em branco do relacionamento. A matriz não fica com 258
+//    linhas por causa disso: quem não teve movimento no período fica BLANK em todas as
+//    medidas (inclusive no farol) e o Power BI esconde a linha sozinho. Ainda assim,
+//    para slicer de corretor vale filtrar `eh_ativo` explicitamente — a lista do
+//    slicer não some sozinha como as linhas da matriz.
+// 3. As medidas por mês dividem por meses-corretor. Na linha de um corretor isso é
+//    a média mensal dele; no total, a média mensal do time inteiro (e não a soma das
+//    médias), que é o número que o gestor quer ler.
+// 4. O farol trata a saída pela data, não pela flag: quem já tinha saído na data de
+//    referência da página fica branco, e quem saiu DEPOIS dela é avaliado normalmente.
+//    Assim a foto de janeiro continua cobrando venda de quem estava na casa em
+//    janeiro, mesmo que a pessoa tenha saído em agosto.
+// 5. [Meses de Casa] é o tempo de casa do vínculo CORRENTE. Corretor recontratado
+//    conta a partir da volta: Beatriz Eburneo de Barros entrou em 02/2024, saiu em
+//    10/2024 e voltou em 02/2025 — para o farol ela tem 19 meses de casa em 09/2026,
+//    não 31. A passagem antiga continua na série de DP-16, que carrega a planilha
+//    inteira, então nada se perde para quem quiser a história completa.
+// =============================================================================

@@ -1,0 +1,124 @@
+<svg width="1280" height="720" viewBox="0 0 1280 720" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">
+<defs>
+  <radialGradient id="bgGrad" cx="192" cy="-72" r="980" gradientUnits="userSpaceOnUse">
+    <stop offset="0%" stop-color="#0E4C8C"/>
+    <stop offset="32%" stop-color="#073266"/>
+    <stop offset="68%" stop-color="#04142A"/>
+    <stop offset="100%" stop-color="#04142A"/>
+  </radialGradient>
+  <linearGradient id="badgeGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+    <stop offset="0%" stop-color="#4CF4F2"/>
+    <stop offset="100%" stop-color="#16AF97"/>
+  </linearGradient>
+  <linearGradient id="cardGrad" x1="0%" y1="0%" x2="40%" y2="100%">
+    <stop offset="0%" stop-color="#FFFFFF" stop-opacity="0.09"/>
+    <stop offset="100%" stop-color="#FFFFFF" stop-opacity="0.03"/>
+  </linearGradient>
+  <linearGradient id="fadeTL" x1="0%" y1="0%" x2="100%" y2="100%">
+    <stop offset="0%" stop-color="#FFFFFF" stop-opacity="0.5"/>
+    <stop offset="45%" stop-color="#FFFFFF" stop-opacity="0.15"/>
+    <stop offset="100%" stop-color="#FFFFFF" stop-opacity="0"/>
+  </linearGradient>
+  <linearGradient id="fadeBR" x1="100%" y1="100%" x2="0%" y2="0%">
+    <stop offset="0%" stop-color="#FFFFFF" stop-opacity="0.5"/>
+    <stop offset="45%" stop-color="#FFFFFF" stop-opacity="0.15"/>
+    <stop offset="100%" stop-color="#FFFFFF" stop-opacity="0"/>
+  </linearGradient>
+  <pattern id="gridPattern" width="28" height="28" patternUnits="userSpaceOnUse">
+    <path d="M28 0H0V28" fill="none" stroke="#FFFFFF" stroke-width="1"/>
+  </pattern>
+  <mask id="maskTL">
+    <rect x="0" y="0" width="220" height="220" fill="url(#fadeTL)"/>
+  </mask>
+  <mask id="maskBR">
+    <rect x="1060" y="500" width="220" height="220" fill="url(#fadeBR)"/>
+  </mask>
+  <filter id="blurGlow1" x="-50%" y="-50%" width="200%" height="200%">
+    <feGaussianBlur stdDeviation="55"/>
+  </filter>
+  <filter id="blurGlow2" x="-50%" y="-50%" width="200%" height="200%">
+    <feGaussianBlur stdDeviation="65"/>
+  </filter>
+  <radialGradient id="glow1Grad" cx="50%" cy="50%" r="50%">
+    <stop offset="0%" stop-color="#4CF4F2" stop-opacity="0.35"/>
+    <stop offset="70%" stop-color="#4CF4F2" stop-opacity="0"/>
+  </radialGradient>
+  <radialGradient id="glow2Grad" cx="50%" cy="50%" r="50%">
+    <stop offset="0%" stop-color="#16AF97" stop-opacity="0.25"/>
+    <stop offset="70%" stop-color="#16AF97" stop-opacity="0"/>
+  </radialGradient>
+  <filter id="cardShadow" x="-30%" y="-30%" width="160%" height="160%">
+    <feDropShadow dx="0" dy="14" stdDeviation="16" flood-color="#000000" flood-opacity="0.28"/>
+  </filter>
+</defs>
+
+<rect width="1280" height="720" fill="url(#bgGrad)"/>
+
+<rect x="0" y="0" width="220" height="220" fill="url(#gridPattern)" mask="url(#maskTL)"/>
+<rect x="1060" y="500" width="220" height="220" fill="url(#gridPattern)" mask="url(#maskBR)"/>
+
+<circle cx="90" cy="50" r="210" fill="url(#glow1Grad)" filter="url(#blurGlow1)"/>
+<circle cx="860" cy="680" r="260" fill="url(#glow2Grad)" filter="url(#blurGlow2)"/>
+
+<image x="64" y="44" height="46" xlink:href="data:image/png;base64,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"/>
+
+<g filter="url(#cardShadow)">
+  <rect x="80.0" y="210" width="256.0" height="300" rx="22" fill="url(#cardGrad)" stroke="#FFFFFF" stroke-opacity="0.14" stroke-width="1"/>
+</g>
+<circle cx="208.0" cy="276.0" r="34" fill="url(#badgeGrad)"/>
+<g transform="translate(192.0,260.0) scale(1.3333)">
+  <path d="M4 20V10M10 20V4M16 20V13M22 20V7" fill="none" stroke="#04142A" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+</g>
+<text x="208.0" y="354.0" text-anchor="middle" font-family="'Segoe UI Semibold','Segoe UI',Arial,sans-serif" font-size="23" font-weight="700" fill="#FFFFFF" letter-spacing="0.4">Comercial</text>
+<text x="208.0" y="380.0" text-anchor="middle" font-family="'Segoe UI','Segoe UI Semibold',Arial,sans-serif" font-size="14" fill="#FFFFFF" fill-opacity="0.6">VGV, funil de vendas,</text>
+<text x="208.0" y="400.0" text-anchor="middle" font-family="'Segoe UI','Segoe UI Semibold',Arial,sans-serif" font-size="14" fill="#FFFFFF" fill-opacity="0.6">IVV e metas</text>
+<circle cx="297.0" cy="473.0" r="15" fill="#FFFFFF" fill-opacity="0.08"/>
+<g transform="translate(290.0,466.0) scale(0.5833)">
+  <path d="M5 12h14M13 6l6 6-6 6" fill="none" stroke="#FFFFFF" stroke-opacity="0.75" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+</g>
+
+<g filter="url(#cardShadow)">
+  <rect x="368.0" y="210" width="256.0" height="300" rx="22" fill="url(#cardGrad)" stroke="#FFFFFF" stroke-opacity="0.14" stroke-width="1"/>
+</g>
+<circle cx="496.0" cy="276.0" r="34" fill="url(#badgeGrad)"/>
+<g transform="translate(480.0,260.0) scale(1.3333)">
+  <path d="M3 11l18-7-7 18-3-8-8-3z" fill="none" stroke="#04142A" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+</g>
+<text x="496.0" y="354.0" text-anchor="middle" font-family="'Segoe UI Semibold','Segoe UI',Arial,sans-serif" font-size="23" font-weight="700" fill="#FFFFFF" letter-spacing="0.4">Marketing</text>
+<text x="496.0" y="380.0" text-anchor="middle" font-family="'Segoe UI','Segoe UI Semibold',Arial,sans-serif" font-size="14" fill="#FFFFFF" fill-opacity="0.6">Leads, canais, mídia</text>
+<text x="496.0" y="400.0" text-anchor="middle" font-family="'Segoe UI','Segoe UI Semibold',Arial,sans-serif" font-size="14" fill="#FFFFFF" fill-opacity="0.6">e qualificação</text>
+<circle cx="585.0" cy="473.0" r="15" fill="#FFFFFF" fill-opacity="0.08"/>
+<g transform="translate(578.0,466.0) scale(0.5833)">
+  <path d="M5 12h14M13 6l6 6-6 6" fill="none" stroke="#FFFFFF" stroke-opacity="0.75" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+</g>
+
+<g filter="url(#cardShadow)">
+  <rect x="656.0" y="210" width="256.0" height="300" rx="22" fill="url(#cardGrad)" stroke="#FFFFFF" stroke-opacity="0.14" stroke-width="1"/>
+</g>
+<circle cx="784.0" cy="276.0" r="34" fill="url(#badgeGrad)"/>
+<g transform="translate(768.0,260.0) scale(1.3333)">
+  <path d="M17 21v-2a4 4 0 0 0-4-4H7a4 4 0 0 0-4 4v2 M10 7 m-4 0 a4 4 0 1 0 8 0 a4 4 0 1 0 -8 0 M23 21v-2a4 4 0 0 0-3-3.87 M16 3.13a4 4 0 0 1 0 7.75" fill="none" stroke="#04142A" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+</g>
+<text x="784.0" y="354.0" text-anchor="middle" font-family="'Segoe UI Semibold','Segoe UI',Arial,sans-serif" font-size="23" font-weight="700" fill="#FFFFFF" letter-spacing="0.4">Relacionamento</text>
+<text x="784.0" y="380.0" text-anchor="middle" font-family="'Segoe UI','Segoe UI Semibold',Arial,sans-serif" font-size="14" fill="#FFFFFF" fill-opacity="0.6">Atendimento, pós-venda</text>
+<text x="784.0" y="400.0" text-anchor="middle" font-family="'Segoe UI','Segoe UI Semibold',Arial,sans-serif" font-size="14" fill="#FFFFFF" fill-opacity="0.6">e satisfação</text>
+<circle cx="873.0" cy="473.0" r="15" fill="#FFFFFF" fill-opacity="0.08"/>
+<g transform="translate(866.0,466.0) scale(0.5833)">
+  <path d="M5 12h14M13 6l6 6-6 6" fill="none" stroke="#FFFFFF" stroke-opacity="0.75" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+</g>
+
+<g filter="url(#cardShadow)">
+  <rect x="944.0" y="210" width="256.0" height="300" rx="22" fill="url(#cardGrad)" stroke="#FFFFFF" stroke-opacity="0.14" stroke-width="1"/>
+</g>
+<circle cx="1072.0" cy="276.0" r="34" fill="url(#badgeGrad)"/>
+<g transform="translate(1056.0,260.0) scale(1.3333)">
+  <path d="M2 5 h20 v14 h-20 z M2 10 h20" fill="none" stroke="#04142A" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+</g>
+<text x="1072.0" y="354.0" text-anchor="middle" font-family="'Segoe UI Semibold','Segoe UI',Arial,sans-serif" font-size="23" font-weight="700" fill="#FFFFFF" letter-spacing="0.4">Crédito</text>
+<text x="1072.0" y="380.0" text-anchor="middle" font-family="'Segoe UI','Segoe UI Semibold',Arial,sans-serif" font-size="14" fill="#FFFFFF" fill-opacity="0.6">Análise, aprovação</text>
+<text x="1072.0" y="400.0" text-anchor="middle" font-family="'Segoe UI','Segoe UI Semibold',Arial,sans-serif" font-size="14" fill="#FFFFFF" fill-opacity="0.6">e acompanhamento</text>
+<circle cx="1161.0" cy="473.0" r="15" fill="#FFFFFF" fill-opacity="0.08"/>
+<g transform="translate(1154.0,466.0) scale(0.5833)">
+  <path d="M5 12h14M13 6l6 6-6 6" fill="none" stroke="#FFFFFF" stroke-opacity="0.75" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+</g>
+</svg>

@@ -4,17 +4,31 @@
 // — ver MODELO_SEMANTICO.md, "evite relacionar às duas fatos ao mesmo tempo").
 //
 // Substitui as 3 páginas do BI Matriz legado ("Perfil do Cliente", "Perfil do
-// Cliente Reserva", "Perfil do Cliente Pré Cadastro"), que liam um CSV manual
-// exportado do CVCRM (perfil_cliente_precadastro.csv/perfil_cliente_reserva.csv,
-// 148 colunas) — não vinham da API CVDW. Ver REGRAS_NEGOCIO.md DP-15 pro
-// levantamento completo (fill rate de cada fonte, escopo de colunas excluídas
-// por LGPD) e powerbi/PAGINA_PERFIL_CLIENTE.md pro desenho da página nova.
+// Cliente Reserva", "Perfil do Cliente Pré Cadastro"), auditadas visual a visual
+// em powerbi/PAGINA_PERFIL_CLIENTE.md em 25/ago/2026: nenhuma das três tinha
+// medida DAX própria (tudo era agregação implícita Sum/CountNonNull direto sobre
+// coluna), duas delas eram duplicata morta e página quebrada (travada num único
+// empreendimento por um filtro esquecido), ver seção 2 do documento. As páginas
+// liam um CSV manual exportado do CVCRM (perfil_cliente_precadastro.csv/
+// perfil_cliente_reserva.csv, 148 colunas), não a API CVDW. Ver REGRAS_NEGOCIO.md
+// DP-15 pro levantamento completo (fill rate de cada fonte, escopo de colunas
+// excluídas por LGPD).
+//
+// ATENÇÃO — direção do relacionamento: por padrão, dim_perfil_cliente 1:*
+// fato_reservas/fato_precadastros só propaga filtro de dimensão pra fato, não o
+// contrário. Slicers de Empreendimento/Regional/Assinatura/Mês/Ano (que filtram
+// dim_empreendimento/dim_calendario, e por elas as fatos) NÃO afetam nenhuma
+// medida abaixo enquanto a relação ativa não estiver com filtro cruzado "Ambas"
+// — ver seção 3 do PAGINA_PERFIL_CLIENTE.md. Sem essa troca, os cards de Renda/
+// Idade Mediana parecem "travados" no total geral.
 //
 // RENDA: dim_perfil_cliente[renda] usa 0 (não NULL) quando não preenchida no CSV
 // de origem — mesmo problema já documentado pra fato_precadastros[renda_total].
 // SEMPRE filtrar tem_renda_informada = TRUE (ou renda > 0) e usar MEDIANA, nunca
 // média crua, em qualquer visual agregado — a digitação é livre no CVCRM, sem
-// validação, e outliers de teto (ex.: 99.999.999,99) puxam a média pra cima.
+// validação, e outliers de teto (ex.: 99.999.999,99) puxam a média pra cima. O
+// legado tinha esse mesmo problema, sem o filtro: os cards "qtd" somavam Idade e
+// Renda crus (ver seção 2.3 do documento), um resultado sem leitura de negócio.
 //
 // PROFISSÃO: profissao_macro/profissao_micro vêm de join vivo com DP-07
 // (silver.dpara_profissoes) — cobertura real ~45-47% dos registros (não é falha
@@ -23,6 +37,13 @@
 
 Perfis Cadastrados =
 DISTINCTCOUNT ( dim_perfil_cliente[documento_chave] )
+
+Entradas no Funil =          // alternativa a "Perfis Cadastrados": conta pré-cadastro (linha), não pessoa
+CALCULATE ( COUNTROWS ( fato_precadastros ), NOT ISBLANK ( fato_precadastros[documento_chave] ) )
+// reproduz a semântica que o legado usava por padrão em todo gráfico (CountNonNull(f_precadastros.Id),
+// ver seção 2.5 do PAGINA_PERFIL_CLIENTE.md) — uma pessoa com 2 pré-cadastros conta 2 vezes aqui e
+// 1 vez em "Perfis Cadastrados". Usar só se a página quiser responder "quantas entradas de funil",
+// não "quantas pessoas distintas"; o padrão recomendado pra esta página é Perfis Cadastrados.
 
 Renda Mediana =                    // exclui renda=0 (não preenchida) — nunca usar AVERAGE aqui
 CALCULATE (
@@ -77,3 +98,79 @@ DIVIDE (
     CALCULATE ( SUM ( fato_precadastros[valor_prestacao] ) ),
     CALCULATE ( SUM ( dim_perfil_cliente[renda] ), dim_perfil_cliente[tem_renda_informada] = TRUE )
 )
+
+// =============================================================================
+// Estado no modelo vivo (BI Matriz V3), criado em 25/ago/2026 via powerbi-mcp:
+// as 9 medidas acima que dependem só de dim_perfil_cliente JÁ ESTÃO no modelo
+// (pasta "Perfil do Cliente"), validadas com uma EVALUATE ao vivo (9.655 perfis,
+// Renda Mediana R$ 2.868, Idade Mediana 32, % Renda Informada 46,8%, % Profissão
+// Identificada 52,5%, % Feminino 51,9%, % Solteiro 68,9%, % PPE 0,06%).
+//
+// "Entradas no Funil" e "Comprometimento de Renda" ainda NÃO foram criadas lá:
+// fato_precadastros no modelo vivo está sem documento_chave e sem
+// valor_prestacao (44 colunas, nenhuma das duas), mesmo as duas já existindo em
+// gold.fato_precadastros. Reabrir o Desktop não resolveu (testado) — o Power
+// Query provavelmente tem um passo "Changed Type"/seleção de colunas que lista
+// só as colunas antigas; precisa editar a consulta de fato_precadastros no
+// Poder Query Editor pra incluir as duas colunas novas, depois Atualizar. Sem
+// isso, o relacionamento dim_perfil_cliente↔fato_precadastros (e por tabela,
+// ↔fato_reservas, que também está sem documento_chave) também não pode ser
+// criado — falta a coluna dos dois lados. Ver seção 3 do PAGINA_PERFIL_CLIENTE.md.
+// =============================================================================
+
+// -----------------------------------------------------------------------------
+// HTML Content — cards do topo da página, mesmo design system de KPIs Leads
+// HTML / KPIs Pré-Cadastro HTML (classes .k/.c/.ic/.l/.v/.s, paleta #003254
+// navy / #6B7280 cinza / #8A1C1C vermelho). 3 cards navy (contagem/mediana) +
+// 2 cards cinza pra cobertura de dado (mesmo tratamento do card "Descartes" em
+// KPIs Leads HTML: métrica de contexto, não headline). Só usa medidas que já
+// existem no modelo vivo hoje (sem dependência de fato_precadastros) — por
+// isso funciona mesmo antes da correção do Power Query acima. Cole em visual
+// HTML Content.
+// -----------------------------------------------------------------------------
+KPIs Perfil Cliente HTML =
+
+VAR _perfis = [Perfis Cadastrados]
+VAR _renda = [Renda Mediana]
+VAR _idade = [Idade Mediana]
+VAR _pctRenda = [% Com Renda Informada]
+VAR _pctProf = [% Com Profissão Identificada]
+
+VAR _icoPerfis = "<svg viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2'></path><circle cx='9' cy='7' r='4'></circle><path d='M23 21v-2a4 4 0 0 0-3-3.87'></path><path d='M16 3.13a4 4 0 0 1 0 7.75'></path></svg>"
+
+VAR _icoRenda = "<svg viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><line x1='12' y1='1' x2='12' y2='23'></line><path d='M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6'></path></svg>"
+
+VAR _icoIdade = "<svg viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><rect x='3' y='4' width='18' height='18' rx='2' ry='2'></rect><line x1='16' y1='2' x2='16' y2='6'></line><line x1='8' y1='2' x2='8' y2='6'></line><line x1='3' y1='10' x2='21' y2='10'></line></svg>"
+
+VAR _icoCoberturaRenda = "<svg viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><line x1='19' y1='5' x2='5' y2='19'></line><circle cx='6.5' cy='6.5' r='2.5'></circle><circle cx='17.5' cy='17.5' r='2.5'></circle></svg>"
+
+VAR _icoCoberturaProf = "<svg viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><rect x='2' y='7' width='20' height='14' rx='2' ry='2'></rect><path d='M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16'></path></svg>"
+
+VAR _css =
+    "<style>" &
+    "html,body{margin:0;padding:0;height:100%;}" &
+    ".k{font-family:'Segoe UI Semibold','Segoe UI',Arial,sans-serif;font-weight:600;display:flex;flex-direction:row;gap:14px;width:100%;height:100%;box-sizing:border-box;}" &
+    ".k .c{position:relative;overflow:hidden;flex:1 1 0;background:#003254;color:#fff;border-radius:16px;padding:18px 22px;box-sizing:border-box;}" &
+    ".k .c.g{background:#6B7280;}" &
+    ".k .c.r{background:#8A1C1C;}" &
+    ".k .ic{position:absolute;top:14px;right:18px;width:40px;height:40px;background:rgba(255,255,255,.15);border-radius:12px;display:flex;align-items:center;justify-content:center;}" &
+    ".k .ic svg{width:22px;height:22px;color:#fff;opacity:.95;}" &
+    ".k .l{font-size:22px;letter-spacing:.02em;opacity:.9;max-width:78%;}" &
+    ".k .v{font-size:48px;margin-top:8px;line-height:1;}" &
+    ".k .s{font-size:22px;opacity:.85;margin-top:6px;}" &
+    "</style>"
+
+RETURN
+    _css &
+    "<div class='k'>" &
+        "<div class='c'><div class='ic'>" & _icoPerfis & "</div><div class='l'>PERFIS CADASTRADOS</div><div class='v'>" &
+            FORMAT ( _perfis, "#,0" ) & "</div><div class='s'>pessoas distintas no período</div></div>" &
+        "<div class='c'><div class='ic'>" & _icoRenda & "</div><div class='l'>RENDA MEDIANA</div><div class='v'>R$ " &
+            FORMAT ( _renda, "#,0" ) & "</div><div class='s'>entre quem informou renda</div></div>" &
+        "<div class='c'><div class='ic'>" & _icoIdade & "</div><div class='l'>IDADE MEDIANA</div><div class='v'>" &
+            FORMAT ( _idade, "0" ) & "</div><div class='s'>anos, entre quem informou</div></div>" &
+        "<div class='c g'><div class='ic'>" & _icoCoberturaRenda & "</div><div class='l'>% COM RENDA INFORMADA</div><div class='v'>" &
+            FORMAT ( _pctRenda, "0.0%" ) & "</div><div class='s'>cobertura de dado, não KPI de negócio</div></div>" &
+        "<div class='c g'><div class='ic'>" & _icoCoberturaProf & "</div><div class='l'>% COM PROFISSÃO IDENTIFICADA</div><div class='v'>" &
+            FORMAT ( _pctProf, "0.0%" ) & "</div><div class='s'>cobertura DP-07, não falha de join</div></div>" &
+    "</div>"

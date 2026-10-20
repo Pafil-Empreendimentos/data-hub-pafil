@@ -205,10 +205,13 @@ IF ( [Meta Share Digital House (Mkt N1)] > 1, UNICHAR ( 9650 ), IF ( [Meta Share
 
 // -----------------------------------------------------------------------------
 // 4. KPIs Marketing N1 HTML — os 9 cards do topo, visual HTML Content.
-//    Mesmo design system das outras *_HTML (fundo #003254, fonte Segoe UI
-//    Semibold). Diferença nova: linha "vs Meta" com seta colorida (verde
-//    #3DDC84 acima da meta, vermelho #FF6B6B abaixo) + popup de hover CSS-only
-//    (House x Parcerias) nos cards Vendas Marketing e VGV.
+//    Redesenhado (out/2026) para o mesmo cartão das outras *_HTML (Telefonia,
+//    Leads, Preço): fundo #003254, Segoe UI Semibold, ícone num quadrado
+//    translúcido no canto, rótulo em caixa alta, valor grande e linha de apoio
+//    (.s). Específico desta página: a linha de apoio traz a variação vs meta
+//    (seta + %, verde #3DDC84 acima, vermelho #FF6B6B abaixo, "sem meta" quando
+//    não há meta cadastrada) + popup de hover CSS-only (House x Parcerias) nos
+//    cards Vendas Marketing e VGV. Os números e as medidas de meta não mudaram.
 //
 //    Popup: painel absoluto ancorado acima do card (`.pop`), oculto por
 //    opacity/visibility e revelado em `.c:hover .pop` — puro CSS, sem
@@ -265,21 +268,36 @@ VAR _metaVgv = [Meta VGV Marketing (Mkt N1)]
 VAR _metaVgvIcone = _metaVendasMktIcone
 // reaproveita o ícone de Vendas Marketing (mesma base de comparação: Qtd vs Meta Qtd)
 
+// Ícones (mesmo conjunto Feather das outras páginas: traço 2, cantos redondos)
+VAR _icoLeads = "<svg viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2'></path><circle cx='9' cy='7' r='4'></circle><path d='M23 21v-2a4 4 0 0 0-3-3.87'></path><path d='M16 3.13a4 4 0 0 1 0 7.75'></path></svg>"
+VAR _icoMql = "<svg viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M16 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2'></path><circle cx='8.5' cy='7' r='4'></circle><polyline points='17 11 19 13 23 9'></polyline></svg>"
+VAR _icoTx = "<svg viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><polyline points='23 6 13.5 15.5 8.5 10.5 1 18'></polyline><polyline points='17 6 23 6 23 12'></polyline></svg>"
+VAR _icoCasa = "<svg viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z'></path><polyline points='9 22 9 12 15 12 15 22'></polyline></svg>"
+VAR _icoAlvo = "<svg viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><circle cx='12' cy='12' r='10'></circle><circle cx='12' cy='12' r='6'></circle><circle cx='12' cy='12' r='2'></circle></svg>"
+VAR _icoPct = "<svg viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><line x1='19' y1='5' x2='5' y2='19'></line><circle cx='6.5' cy='6.5' r='2.5'></circle><circle cx='17.5' cy='17.5' r='2.5'></circle></svg>"
+VAR _icoTela = "<svg viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><rect x='2' y='3' width='20' height='14' rx='2' ry='2'></rect><line x1='8' y1='21' x2='16' y2='21'></line><line x1='12' y1='17' x2='12' y2='21'></line></svg>"
+VAR _icoPizza = "<svg viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M21.21 15.89A10 10 0 1 1 8 2.83'></path><path d='M22 12A10 10 0 0 0 12 2v10z'></path></svg>"
+VAR _icoVgv = "<svg viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><line x1='12' y1='1' x2='12' y2='23'></line><path d='M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6'></path></svg>"
+
+// Mesmas classes e proporções de [KPIs Telefonia HTML] / [KPIs Leads HTML]
+// (.k/.c/.ic/.l/.v/.s, fundo #003254, ícone em quadrado translúcido). Específico
+// desta página: a linha .s carrega a comparação com a meta (.d, verde/vermelho)
+// e o card ganha o popup de hover (.pop), então .c fica com overflow:visible.
+// O rótulo reserva 2 linhas (.l min-height) porque "% Vendas Digitais House" quebra
+// ao lado do ícone, e assim os 9 valores ficam alinhados.
 VAR _css =
     "<style>" &
     "html,body{margin:0;padding:0;height:100%;}" &
-    ".k{font-family:'Segoe UI Semibold','Segoe UI',Arial,sans-serif;font-weight:600;display:flex;flex-direction:row;gap:14px;width:100%;height:100%;box-sizing:border-box;}" &
-    ".k .c{position:relative;overflow:visible;flex:1 1 0;background:#003254;color:#fff;border-radius:18px;padding:16px 20px;box-sizing:border-box;display:flex;flex-direction:column;justify-content:center;}" &
-    ".k .l{font-size:26px;letter-spacing:.02em;opacity:.85;text-transform:uppercase;}" &
-    ".k .v{font-size:60px;margin-top:6px;line-height:1;}" &
-    ".k .meta{display:flex;align-items:center;gap:8px;margin-top:12px;padding-top:12px;border-top:1px solid rgba(255,255,255,.18);}" &
-    ".k .arrow{font-size:26px;}" &
+    ".k{font-family:'Segoe UI Semibold','Segoe UI',Arial,sans-serif;font-weight:600;display:flex;flex-direction:row;gap:18px;width:100%;height:100%;box-sizing:border-box;}" &
+    ".k .c{position:relative;overflow:visible;flex:1 1 0;min-width:0;background:#003254;color:#fff;border-radius:20px;padding:22px 24px;box-sizing:border-box;}" &
+    ".k .ic{position:absolute;top:16px;right:18px;width:46px;height:46px;background:rgba(255,255,255,.15);border-radius:14px;display:flex;align-items:center;justify-content:center;}" &
+    ".k .ic svg{width:26px;height:26px;color:#fff;opacity:.95;}" &
+    ".k .l{font-size:24px;line-height:1.15;letter-spacing:.02em;opacity:.9;max-width:68%;min-height:56px;text-transform:uppercase;}" &
+    ".k .v{font-size:54px;margin-top:8px;line-height:1;}" &
+    ".k .s{font-size:20px;line-height:1.3;opacity:.85;margin-top:10px;}" &
+    ".k .d{font-weight:700;opacity:1;}" &
     ".k .up{color:#3DDC84;}" &
     ".k .down{color:#FF6B6B;}" &
-    ".k .metatxt{display:flex;flex-direction:column;line-height:1.25;}" &
-    ".k .pct{font-size:22px;font-weight:700;}" &
-    ".k .vslabel{font-size:16px;opacity:.75;}" &
-    ".k .metaval{font-size:16px;opacity:.55;margin-left:auto;align-self:flex-end;}" &
     ".k .pop{position:absolute;bottom:100%;left:50%;transform:translateX(-50%) translateY(-8px);opacity:0;visibility:hidden;pointer-events:none;transition:opacity .15s ease,transform .15s ease;background:#fff;color:#0F1E27;border-radius:10px;padding:16px 20px;box-shadow:0 10px 30px rgba(0,0,0,.3);white-space:nowrap;z-index:20;font-weight:600;}" &
     ".k .c:hover .pop{opacity:1;visibility:visible;transform:translateX(-50%) translateY(-14px);}" &
     ".k .pop .poptitle{font-size:15px;letter-spacing:.05em;opacity:.55;text-transform:uppercase;margin-bottom:8px;}" &
@@ -317,36 +335,40 @@ VAR _popVgv =
         "<div class='poprow'><span class='popdot' style='background:#8AB6D6'></span>Parcerias<span class='popval'>R$ " & FORMAT ( _vgvMktParc, "#,0" ) & "</span></div>" &
     "</div>"
 
+// Linha de apoio de cada card: seta + variação vs meta (colorida) e o valor da meta.
+// Sem meta cadastrada (DIVIDE devolve vazio) mostra "sem meta" em vez de -100%.
+VAR _sLead = IF ( ISBLANK ( _metaLeads ), "sem meta", "<span class='d " & _clsLead & "'>" & _metaLeadsIcone & " " & FORMAT ( _metaLeads - 1, "+0%;-0%;0%" ) & "</span> vs meta " & FORMAT ( _metaLeadsRaw, "#,0" ) )
+VAR _sMql = IF ( ISBLANK ( _metaMql ), "sem meta", "<span class='d " & _clsMql & "'>" & _metaMqlIcone & " " & FORMAT ( _metaMql - 1, "+0%;-0%;0%" ) & "</span> vs meta " & FORMAT ( _metaMqlRaw, "#,0" ) )
+VAR _sQuali = IF ( ISBLANK ( _metaQuali ), "sem meta", "<span class='d " & _clsQuali & "'>" & _metaQualiIcone & " " & FORMAT ( _metaQuali - 1, "+0%;-0%;0%" ) & "</span> vs meta " & FORMAT ( _metaQualiRaw, "0%" ) )
+VAR _sVendasHouse = IF ( ISBLANK ( _metaVendasHouse ), "sem meta", "<span class='d " & _clsVendasHouse & "'>" & _metaVendasHouseIcone & " " & FORMAT ( _metaVendasHouse - 1, "+0%;-0%;0%" ) & "</span> vs meta " & FORMAT ( _metaVendasHouseRaw, "#,0" ) )
+VAR _sVendasMkt = IF ( ISBLANK ( _metaVendasMkt ), "sem meta", "<span class='d " & _clsVendasMkt & "'>" & _metaVendasMktIcone & " " & FORMAT ( _metaVendasMkt - 1, "+0%;-0%;0%" ) & "</span> vs meta " & FORMAT ( _metaVendasMktRaw, "#,0" ) )
+VAR _sShareMktHouse = IF ( ISBLANK ( _metaShareMktHouse ), "sem meta", "<span class='d " & _clsShareMktHouse & "'>" & _metaShareMktHouseIcone & " " & FORMAT ( _metaShareMktHouse - 1, "+0%;-0%;0%" ) & "</span> vs meta " & FORMAT ( _metaShareMktHouseRaw, "0%" ) )
+VAR _sVendasDigital = IF ( ISBLANK ( _metaVendasDigital ), "sem meta", "<span class='d " & _clsVendasDigital & "'>" & _metaVendasDigitalIcone & " " & FORMAT ( _metaVendasDigital - 1, "+0%;-0%;0%" ) & "</span> vs meta " & FORMAT ( _metaVendasDigitalRaw, "#,0" ) )
+VAR _sShareDigitalHouse = IF ( ISBLANK ( _metaShareDigitalHouse ), "sem meta", "<span class='d " & _clsShareDigitalHouse & "'>" & _metaShareDigitalHouseIcone & " " & FORMAT ( _metaShareDigitalHouse - 1, "+0%;-0%;0%" ) & "</span> vs meta " & FORMAT ( _metaShareDigitalHouseRaw, "0%" ) )
+// VGV: variação e cor seguem Vendas Marketing (Qtd vs meta de contagem), como no legado.
+VAR _sVgv = IF ( ISBLANK ( _metaVendasMkt ), "sem meta", "<span class='d " & _clsVgv & "'>" & _metaVgvIcone & " " & FORMAT ( _metaVendasMkt - 1, "+0%;-0%;0%" ) & "</span> vs meta R$ " & FORMAT ( _metaVgv / 1000000, "#,0.00" ) & " Mi" )
+
 RETURN
 _css &
 "<div class='k'>" &
 
-    "<div class='c'><div class='l'>QTD LEADS</div><div class='v'>" & FORMAT ( _leads, "#,0" ) & "</div>" &
-    "<div class='meta'><span class='arrow " & _clsLead & "'>" & _metaLeadsIcone & "</span><div class='metatxt'><span class='pct " & _clsLead & "'>" & FORMAT ( _metaLeads - 1, "+0%;-0%;0%" ) & "</span><span class='vslabel'>vs Meta " & FORMAT ( _metaLeadsRaw, "#,0" ) & "</span></div></div></div>" &
+    "<div class='c'><div class='ic'>" & _icoLeads & "</div><div class='l'>QTD LEADS</div><div class='v'>" & FORMAT ( _leads, "#,0" ) & "</div><div class='s'>" & _sLead & "</div></div>" &
 
-    "<div class='c'><div class='l'>MQL</div><div class='v'>" & FORMAT ( _mql, "#,0" ) & "</div>" &
-    "<div class='meta'><span class='arrow " & _clsMql & "'>" & _metaMqlIcone & "</span><div class='metatxt'><span class='pct " & _clsMql & "'>" & FORMAT ( _metaMql - 1, "+0%;-0%;0%" ) & "</span><span class='vslabel'>vs Meta " & FORMAT ( _metaMqlRaw, "#,0" ) & "</span></div></div></div>" &
+    "<div class='c'><div class='ic'>" & _icoMql & "</div><div class='l'>MQL</div><div class='v'>" & FORMAT ( _mql, "#,0" ) & "</div><div class='s'>" & _sMql & "</div></div>" &
 
-    "<div class='c'><div class='l'>% QUALIFICAÇÃO</div><div class='v'>" & FORMAT ( _quali, "0%" ) & "</div>" &
-    "<div class='meta'><span class='arrow " & _clsQuali & "'>" & _metaQualiIcone & "</span><div class='metatxt'><span class='pct " & _clsQuali & "'>" & FORMAT ( _metaQuali - 1, "+0%;-0%;0%" ) & "</span><span class='vslabel'>vs Meta " & FORMAT ( _metaQualiRaw, "0%" ) & "</span></div></div></div>" &
+    "<div class='c'><div class='ic'>" & _icoTx & "</div><div class='l'>% QUALIFICAÇÃO</div><div class='v'>" & FORMAT ( _quali, "0%" ) & "</div><div class='s'>" & _sQuali & "</div></div>" &
 
-    "<div class='c'><div class='l'>VENDAS HOUSE</div><div class='v'>" & FORMAT ( _vendasHouse, "#,0" ) & "</div>" &
-    "<div class='meta'><span class='arrow " & _clsVendasHouse & "'>" & _metaVendasHouseIcone & "</span><div class='metatxt'><span class='pct " & _clsVendasHouse & "'>" & FORMAT ( _metaVendasHouse - 1, "+0%;-0%;0%" ) & "</span><span class='vslabel'>vs Meta " & FORMAT ( _metaVendasHouseRaw, "#,0" ) & "</span></div></div></div>" &
+    "<div class='c'><div class='ic'>" & _icoCasa & "</div><div class='l'>VENDAS HOUSE</div><div class='v'>" & FORMAT ( _vendasHouse, "#,0" ) & "</div><div class='s'>" & _sVendasHouse & "</div></div>" &
 
-    "<div class='c'><div class='l'>VENDAS MARKETING</div><div class='v'>" & FORMAT ( _vendasMkt, "#,0" ) & "</div>" &
-    "<div class='meta'><span class='arrow " & _clsVendasMkt & "'>" & _metaVendasMktIcone & "</span><div class='metatxt'><span class='pct " & _clsVendasMkt & "'>" & FORMAT ( _metaVendasMkt - 1, "+0%;-0%;0%" ) & "</span><span class='vslabel'>vs Meta " & FORMAT ( _metaVendasMktRaw, "#,0" ) & "</span></div></div>" & _popVendas & "</div>" &
+    "<div class='c'><div class='ic'>" & _icoAlvo & "</div><div class='l'>VENDAS MARKETING</div><div class='v'>" & FORMAT ( _vendasMkt, "#,0" ) & "</div><div class='s'>" & _sVendasMkt & "</div>" & _popVendas & "</div>" &
 
-    "<div class='c'><div class='l'>VENDAS MKT HOUSE %</div><div class='v'>" & FORMAT ( _shareMktHouse, "0.00%" ) & "</div>" &
-    "<div class='meta'><span class='arrow " & _clsShareMktHouse & "'>" & _metaShareMktHouseIcone & "</span><div class='metatxt'><span class='pct " & _clsShareMktHouse & "'>" & FORMAT ( _metaShareMktHouse - 1, "+0%;-0%;0%" ) & "</span><span class='vslabel'>vs Meta " & FORMAT ( _metaShareMktHouseRaw, "0%" ) & "</span></div></div></div>" &
+    "<div class='c'><div class='ic'>" & _icoPct & "</div><div class='l'>VENDAS MKT HOUSE %</div><div class='v'>" & FORMAT ( _shareMktHouse, "0.0%" ) & "</div><div class='s'>" & _sShareMktHouse & "</div></div>" &
 
-    "<div class='c'><div class='l'>VENDAS DIGITAIS</div><div class='v'>" & FORMAT ( _vendasDigital, "#,0" ) & "</div>" &
-    "<div class='meta'><span class='arrow " & _clsVendasDigital & "'>" & _metaVendasDigitalIcone & "</span><div class='metatxt'><span class='pct " & _clsVendasDigital & "'>" & FORMAT ( _metaVendasDigital - 1, "+0%;-0%;0%" ) & "</span><span class='vslabel'>vs Meta " & FORMAT ( _metaVendasDigitalRaw, "#,0" ) & "</span></div></div></div>" &
+    "<div class='c'><div class='ic'>" & _icoTela & "</div><div class='l'>VENDAS DIGITAIS</div><div class='v'>" & FORMAT ( _vendasDigital, "#,0" ) & "</div><div class='s'>" & _sVendasDigital & "</div></div>" &
 
-    "<div class='c'><div class='l'>% VENDAS DIGITAIS HOUSE</div><div class='v'>" & FORMAT ( _shareDigitalHouse, "0.00%" ) & "</div>" &
-    "<div class='meta'><span class='arrow " & _clsShareDigitalHouse & "'>" & _metaShareDigitalHouseIcone & "</span><div class='metatxt'><span class='pct " & _clsShareDigitalHouse & "'>" & FORMAT ( _metaShareDigitalHouse - 1, "+0%;-0%;0%" ) & "</span><span class='vslabel'>vs Meta " & FORMAT ( _metaShareDigitalHouseRaw, "0%" ) & "</span></div></div></div>" &
+    "<div class='c'><div class='ic'>" & _icoPizza & "</div><div class='l'>% VENDAS DIGITAIS HOUSE</div><div class='v'>" & FORMAT ( _shareDigitalHouse, "0.0%" ) & "</div><div class='s'>" & _sShareDigitalHouse & "</div></div>" &
 
-    "<div class='c'><div class='l'>VGV</div><div class='v'>" & "R$ " & FORMAT ( _vgv / 1000000, "#,0.00" ) & " Mi</div>" &
-    "<div class='meta'><span class='arrow " & _clsVgv & "'>" & _metaVgvIcone & "</span><div class='metatxt'><span class='pct " & _clsVgv & "'>" & FORMAT ( _metaVendasMkt - 1, "+0%;-0%;0%" ) & "</span><span class='vslabel'>vs Meta R$ " & FORMAT ( _metaVgv / 1000000, "#,0.00" ) & " Mi</span></div></div>" & _popVgv & "</div>" &
+    "<div class='c'><div class='ic'>" & _icoVgv & "</div><div class='l'>VGV</div><div class='v'>R$ " & FORMAT ( _vgv / 1000000, "#,0.00" ) & " Mi</div><div class='s'>" & _sVgv & "</div>" & _popVgv & "</div>" &
 
 "</div>"
 

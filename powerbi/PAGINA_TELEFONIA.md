@@ -92,6 +92,16 @@ Três coisas para saber ler:
    o botão de "abrir no próximo nível" (seta dupla) para ver os dias do mês clicado. No eixo do dia,
    Formatar > Eixo X > Tipo: Categórico, para os dias não virarem linha do tempo contínua.
 
+6. **URA sem ruído (16/out/2026, pedido do Igor).** A tabela das opções do menu e as roscas da URA seguem a
+   mesma regra dos cartões e das tabelas de setor e ramal: ligação real, sem robocall e spam. Medidas
+   novas `[Ligações URA Reais]` (2.687 de 3.174), `[Ligações URA Não Atendidas Reais]` (1.934),
+   `[% Atendimento URA Real]` e `[% Não Atendimento URA Real]`. Atendida nunca é ruído, então
+   `[Ligações URA Atendidas]` (753) serve às duas. As versões brutas ficam para conferir. 487 das 3.174
+   eram ruído, 426 só em "Desligou durante o menu".
+7. **Cabeçalho que não some.** O CSS só desenha o cabeçalho na primeira linha do visual. As três medidas
+   de linha (opção, setor e ramal) agora devolvem só o cabeçalho quando a linha fica vazia, em vez de
+   BLANK, para a primeira linha nunca ficar sem ele.
+
 **Pegadinha das tabelas de setor e ramal:** ligação não atendida quase nunca tem ramal (poucas têm, como
 3 de 1.142 no ramal 8260). Por isso o "Total" e as "Não atendidas" por setor ou ramal são quase só
 atendidas, e a quase totalidade das não atendidas fica na linha **Sem ramal registrado**, em cinza e

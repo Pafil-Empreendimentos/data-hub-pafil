@@ -21,11 +21,21 @@
 // módulo (diferente do Blip, que replica o painel nativo). Revisitar o design
 // das medidas quando o volume crescer.
 //
-// ATENÇÃO DE UNIDADE: tempo_resposta e tempo_finalizado (gold, em segundos) têm
-// essa unidade INFERIDA pela ordem de grandeza dos valores observados (ex.:
-// 1.308.597 ≈ 15 dias, plausível para uma Assistência Técnica lenta), não
-// confirmada pela documentação da API. Conferir contra o CVCRM (tela do
-// atendimento) assim que houver um caso real pra comparar.
+// UNIDADE DE TEMPO (corrigida em 08/out/2026): tempo_finalizado vem em MINUTOS,
+// não em segundos. Conferido na API contra data_finalizado - data_cad: o valor
+// bate, truncado em minutos inteiros, nos 304 finalizados de 304. A versão
+// anterior deste arquivo assumia segundos e dividia por 86.400, então o cartão
+// mostrava "0,1 dias" para uma média real de ~6.000 minutos (~100 horas).
+// tempo_resposta tem só 3 registros preenchidos em 329; assumida em minutos
+// também, sem como provar.
+//
+// A MÉDIA é puxada por poucos atendimentos que ficaram semanas ou anos abertos
+// (um de 2024 finalizado em 2026 tem 21.810 h sozinho). A mediana típica é de
+// ~1 h. Se o cartão parecer alto demais num período sem filtro, é isso.
+//
+// HUMOR DO CLIENTE: o CVDW traz o código (N/I/S) e a silver decodifica em
+// Normal/Irritado/Satisfeito/Não informado (ver silver.sql). Só o N está
+// confirmado contra a tela do CVCRM; I e S são inferidos.
 // =============================================================================
 
 // ---- Contagens ----
@@ -55,25 +65,62 @@ CALCULATE (
 Taxa de Cancelamento =
 DIVIDE ( [Atendimentos Cancelados], [Total Atendimentos] )
 
+// Campo "Encerrado no primeiro contato" do CVCRM (S/N no CVDW). Em 08/out/2026:
+// 70 de 329 (21,3%). Entra na faixa de KPIs no lugar de Cancelados e Tx
+// Cancelamento (pedido de 08/out/2026); as duas medidas de cancelamento seguem
+// no modelo, só saíram do cartão.
+Atendimentos Encerrados 1º Contato =
+CALCULATE ( COUNTROWS ( fato_atendimentos_cvcrm ), fato_atendimentos_cvcrm[eh_resolvido_primeiro_contato] = TRUE () )
+
 Taxa de Resolução 1º Contato =
-DIVIDE (
-    CALCULATE ( COUNTROWS ( fato_atendimentos_cvcrm ), fato_atendimentos_cvcrm[eh_resolvido_primeiro_contato] = TRUE () ),
-    [Total Atendimentos]
-)
+DIVIDE ( [Atendimentos Encerrados 1º Contato], [Total Atendimentos] )
 
-// ---- Tempos médios, base em segundos (ver nota de unidade no topo) ----
+// ---- Tempos médios, base em minutos (ver nota de unidade no topo) ----
 
-Tempo Médio de Resposta (seg) =
+Tempo Médio de Resposta (min) =
 AVERAGE ( fato_atendimentos_cvcrm[tempo_resposta] )
 
-Tempo Médio de Finalização (seg) =
+Tempo Médio de Finalização (min) =
 AVERAGE ( fato_atendimentos_cvcrm[tempo_finalizado] )
 
-// Exibição em dias, uma casa decimal — mais legível que segundos/hh:mm:ss
-// quando o prazo típico é de dias (ao contrário do Blip, que mede minutos).
-Tempo Médio de Finalização (dias) =
-VAR s = [Tempo Médio de Finalização (seg)]
-RETURN IF ( ISBLANK ( s ), BLANK (), ROUND ( s / 86400, 1 ) )
+// Exibição em horas, uma casa decimal (pedido da reunião de 08/out/2026, no
+// lugar de dias). A coluna já vem em minutos, então é só dividir por 60.
+Tempo Médio de Finalização (horas) =
+VAR m = [Tempo Médio de Finalização (min)]
+RETURN IF ( ISBLANK ( m ), BLANK (), ROUND ( m / 60, 1 ) )
+
+// Os três cartões de tempo (pegar, atender e finalizar) mostram a MEDIANA, não a média
+// (pedido de 15/out/2026): a média é puxada por poucos atendimentos que ficaram semanas
+// ou anos abertos (um de 2024 tem 909 dias). As medidas de média seguem no modelo.
+Tempo Mediano de Finalização (min) =
+MEDIAN ( fato_atendimentos_cvcrm[tempo_finalizado] )
+
+// ---- Pegar e atender (pedido do Igor, 14/out/2026) ----
+// Vêm de gold.fato_atendimentos_cvcrm[tempo_pegar_min] e [tempo_atender_min], que por
+// sua vez vêm do endpoint atendimentos/workflow/tempo do CVDW (PAGINA_ATENDIMENTO_CVCRM.md,
+// seção 7). Só atendimentos FINALIZADOS têm valor; o aberto fica em branco e AVERAGE e
+// MEDIAN ignoram. Pegar = da abertura até alguém assumir (etapa "Em Atendimento");
+// atender = dessa etapa até finalizar. Nas MÉDIAS, pegar + atender = finalizar, sempre;
+// nas medianas, que são as que os cartões mostram, a soma não fecha.
+Tempo Médio de Pegar (min) =
+AVERAGE ( fato_atendimentos_cvcrm[tempo_pegar_min] )
+
+Tempo Médio de Pegar (horas) =
+VAR m = [Tempo Médio de Pegar (min)]
+RETURN IF ( ISBLANK ( m ), BLANK (), ROUND ( m / 60, 1 ) )
+
+Tempo Mediano de Pegar (min) =
+MEDIAN ( fato_atendimentos_cvcrm[tempo_pegar_min] )
+
+Tempo Médio de Atender (min) =
+AVERAGE ( fato_atendimentos_cvcrm[tempo_atender_min] )
+
+Tempo Médio de Atender (horas) =
+VAR m = [Tempo Médio de Atender (min)]
+RETURN IF ( ISBLANK ( m ), BLANK (), ROUND ( m / 60, 1 ) )
+
+Tempo Mediano de Atender (min) =
+MEDIAN ( fato_atendimentos_cvcrm[tempo_atender_min] )
 
 // ---- Qualidade ----
 
@@ -85,6 +132,48 @@ CALCULATE ( COUNTROWS ( fato_atendimentos_cvcrm ), NOT ISBLANK ( fato_atendiment
 
 Média de Mensagens por Atendimento =
 AVERAGE ( fato_atendimentos_cvcrm[quantidade_mensagens] )
+
+// ---- Humor do cliente (gráfico de pizza) ----
+// Não precisa de medida de contagem própria: o visual usa
+//   Legenda  -> fato_atendimentos_cvcrm[humor_cliente]
+//   Valores  -> [Total Atendimentos]
+// e esta medida pinta cada fatia (Formatar > Fatias > Cores > fx > Valor do
+// campo). Mesma paleta da página: azul/vermelho da faixa de KPIs, verde do selo
+// Finalizado. O valor do meio é o fallback pra um código novo do CVCRM.
+Cor Humor Cliente =
+SWITCH (
+    SELECTEDVALUE ( fato_atendimentos_cvcrm[humor_cliente] ),
+    "Normal",        "#003254",
+    "Irritado",      "#8A1C1C",
+    "Satisfeito",    "#1B6B3A",
+    "Não informado", "#9CA3AF",
+    "#6B7280"
+)
+
+// Cor por situação nas colunas dos três gráficos por equipe (eixo X = situacao,
+// ver PAGINA_ATENDIMENTO_CVCRM.md, seção 6). Finalizado usa o azul da página, e
+// NÃO o verde dos selos da tabela de detalhe (.sit-finalizado, #1B6B3A): em
+// coluna grande, que é 88% a 93% do gráfico, esse verde saturado ficou
+// chamativo demais (pedido de 08/out/2026). Cancelado e as demais seguem os
+// selos (.sit-cancelado, .sit-outra). Para voltar a um verde mais discreto,
+// trocar só o hex de Finalizado aqui, por exemplo "#5B8F76".
+Cor Situação Atendimento CVCRM =
+SWITCH (
+    SELECTEDVALUE ( fato_atendimentos_cvcrm[situacao] ),
+    "Finalizado", "#003254",
+    "Cancelado",  "#8A1C1C",
+    "#6B7280"
+)
+
+// Parcela de atendimentos com cliente irritado no filtro atual. Vai na dica de
+// ferramenta das barras empilhadas por assunto (assunto na linha, humor na
+// legenda, [Total Atendimentos] nos valores): em 08/out/2026, Distrato tem 11
+// irritados em 30 (36,7%) e Atraso de Obra 15 em 107 (14,0%).
+% Clientes Irritados =
+DIVIDE (
+    CALCULATE ( [Total Atendimentos], fato_atendimentos_cvcrm[humor_cliente] = "Irritado" ),
+    [Total Atendimentos]
+)
 
 // =============================================================================
 // HTML/CSS — mesma linguagem visual das páginas de Blip e Performance (fonte
@@ -104,23 +193,34 @@ KPIs Atendimento CVCRM HTML =
 VAR _total       = [Total Atendimentos]
 VAR _emAberto    = [Atendimentos Em Aberto]
 VAR _finalizados = [Atendimentos Finalizados]
-VAR _cancelados  = [Atendimentos Cancelados]
-VAR _txCancel    = [Taxa de Cancelamento]
-VAR _tempoFinalDias = [Tempo Médio de Finalização (dias)]
+// COALESCE no contador: sem nenhum encerrado no filtro a medida devolve BLANK e
+// o FORMAT mostraria "" em vez de 0.
+VAR _encerrados1  = COALESCE ( [Atendimentos Encerrados 1º Contato], 0 )
+VAR _txEncerrados1 = [Taxa de Resolução 1º Contato]
+VAR _txEncerrados1Txt = IF ( ISBLANK ( _txEncerrados1 ), "--", FORMAT ( _txEncerrados1, "0.0%" ) )
+// Pegar, atender e finalizar (seção 7 de PAGINA_ATENDIMENTO_CVCRM.md): os três cartões
+// mostram a MEDIANA (pedido de 15/out/2026, no lugar da média). A mediana é o "tempo
+// típico"; a média engana, porque um atendimento de 2024 com 909 dias a infla de 12 h
+// para 65 h. Em minutos até 1 h e em horas acima. Com mediana, pegar + atender NÃO dá
+// finalizar (17 + 0 contra 57 min): medianas não somam, ao contrário das médias.
 // FORMAT() de um número em branco devolve "" (texto vazio), não BLANK() — um
 // COALESCE em cima do resultado formatado nunca cairia no fallback "--", e
-// mostraria só a unidade solta ("dias", sem número). Por isso o ISBLANK checa
+// mostraria só a unidade solta ("h", sem número). Por isso o ISBLANK checa
 // a medida numérica ANTES de formatar, não depois.
-VAR _tempoFinal  = IF ( ISBLANK ( _tempoFinalDias ), "--", FORMAT ( _tempoFinalDias, "#,0.0" ) & " dias" )
-VAR _avaliacao   = IF ( [Qtd Avaliações] > 0, FORMAT ( [Avaliação Média], "0.0" ) & "/5", "--" )
+VAR _medPegar     = [Tempo Mediano de Pegar (min)]
+VAR _medAtender   = [Tempo Mediano de Atender (min)]
+VAR _medFinal     = [Tempo Mediano de Finalização (min)]
+VAR _txtMedPegar   = IF ( ISBLANK ( _medPegar ), "--", IF ( _medPegar < 60, FORMAT ( _medPegar, "#,0" ) & " min", FORMAT ( _medPegar / 60, "#,0.0" ) & " h" ) )
+VAR _txtMedAtender = IF ( ISBLANK ( _medAtender ), "--", IF ( _medAtender < 60, FORMAT ( _medAtender, "#,0" ) & " min", FORMAT ( _medAtender / 60, "#,0.0" ) & " h" ) )
+VAR _txtMedFinal   = IF ( ISBLANK ( _medFinal ), "--", IF ( _medFinal < 60, FORMAT ( _medFinal, "#,0" ) & " min", FORMAT ( _medFinal / 60, "#,0.0" ) & " h" ) )
 
 VAR _icoInbox = "<svg viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><polyline points='22 12 16 12 14 15 10 15 8 12 2 12'></polyline><path d='M5.45 5.11L2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z'></path></svg>"
 VAR _icoAberto = "<svg viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z'></path></svg>"
 VAR _icoCheck  = "<svg viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M22 11.08V12a10 10 0 1 1-5.93-9.14'></path><polyline points='22 4 12 14.01 9 11.01'></polyline></svg>"
-VAR _icoCancel = "<svg viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><circle cx='12' cy='12' r='10'></circle><line x1='15' y1='9' x2='9' y2='15'></line><line x1='9' y1='9' x2='15' y2='15'></line></svg>"
-VAR _icoQueda  = "<svg viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><polyline points='23 18 13.5 8.5 8.5 13.5 1 6'></polyline><polyline points='17 18 23 18 23 12'></polyline></svg>"
+VAR _icoContato = "<svg viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M16 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2'></path><circle cx='8.5' cy='7' r='4'></circle><polyline points='17 11 19 13 23 9'></polyline></svg>"
 VAR _icoRelogio = "<svg viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><circle cx='12' cy='12' r='10'></circle><polyline points='12 6 12 12 16 14'></polyline></svg>"
-VAR _icoEstrela = "<svg viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><polygon points='12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2'></polygon></svg>"
+VAR _icoPegar = "<svg viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4'></path><polyline points='10 17 15 12 10 7'></polyline><line x1='15' y1='12' x2='3' y2='12'></line></svg>"
+VAR _icoAtender = "<svg viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M3 18v-6a9 9 0 0 1 18 0v6'></path><path d='M21 19a2 2 0 0 1-2 2h-1a2 2 0 0 1-2-2v-3a2 2 0 0 1 2-2h3zM3 19a2 2 0 0 0 2 2h1a2 2 0 0 0 2-2v-3a2 2 0 0 0-2-2H3z'></path></svg>"
 
 VAR _css =
     "<style>" &
@@ -148,17 +248,19 @@ RETURN
         "<div class='c'><div class='ic'>" & _icoCheck & "</div><div class='l'>FINALIZADOS</div><div class='v'>" &
             FORMAT ( _finalizados, "#,0" ) & "</div><div class='s'>atendimentos concluídos</div></div>" &
 
-        "<div class='c r'><div class='ic'>" & _icoCancel & "</div><div class='l'>CANCELADOS</div><div class='v'>" &
-            FORMAT ( _cancelados, "#,0" ) & "</div><div class='s'>atendimentos cancelados</div></div>" &
+        "<div class='c'><div class='ic'>" & _icoContato & "</div><div class='l'>ENCERRADOS 1º CONTATO</div><div class='v'>" &
+            FORMAT ( _encerrados1, "#,0" ) & "</div><div class='s'>" & _txEncerrados1Txt & " dos atendimentos</div></div>" &
 
-        "<div class='c r'><div class='ic'>" & _icoQueda & "</div><div class='l'>TX CANCELAMENTO</div><div class='v'>" &
-            FORMAT ( _txCancel, "0.0%" ) & "</div><div class='s'>sobre o total</div></div>" &
+        -- Os três cartões de tempo levam a definição num atributo title (balão ao passar o
+        -- mouse). Sem aspas simples dentro do texto: o atributo é delimitado por elas.
+        "<div class='c' title='Mediana do tempo da abertura do atendimento até alguém assumir (etapa Em Atendimento). Só atendimentos finalizados.'><div class='ic'>" & _icoPegar & "</div><div class='l'>TEMPO PARA PEGAR</div><div class='v'>" &
+            _txtMedPegar & "</div><div class='s'>mediana, até alguém assumir</div></div>" &
 
-        "<div class='c'><div class='ic'>" & _icoRelogio & "</div><div class='l'>TEMPO DE FINALIZAÇÃO</div><div class='v'>" &
-            _tempoFinal & "</div><div class='s'>média, da abertura ao fechamento</div></div>" &
+        "<div class='c' title='Mediana do tempo desde que alguém assumiu até finalizar (etapa Em Atendimento). Só atendimentos finalizados.'><div class='ic'>" & _icoAtender & "</div><div class='l'>TEMPO DE ATENDIMENTO</div><div class='v'>" &
+            _txtMedAtender & "</div><div class='s'>mediana, de assumir a finalizar</div></div>" &
 
-        "<div class='c'><div class='ic'>" & _icoEstrela & "</div><div class='l'>AVALIAÇÃO</div><div class='v'>" &
-            _avaliacao & "</div><div class='s'>" & FORMAT ( [Qtd Avaliações], "#,0" ) & " atendimento(s) avaliado(s)</div></div>" &
+        "<div class='c' title='Mediana do tempo da abertura ao fechamento. Só atendimentos finalizados.'><div class='ic'>" & _icoRelogio & "</div><div class='l'>TEMPO DE FINALIZAÇÃO</div><div class='v'>" &
+            _txtMedFinal & "</div><div class='s'>mediana, da abertura ao fechamento</div></div>" &
     "</div>"
 
 // ---- 2. Tabela de detalhe, com clique ----
@@ -188,7 +290,7 @@ RETURN
 //                de um elemento display:contents)
 //   Formatar -> No data message -> "Nenhum atendimento no período selecionado."
 CSS Tabela Atendimentos CVCRM =
-    "#htmlContent{display:grid;grid-template-columns:repeat(8,auto);align-content:start;font-family:'Segoe UI','Segoe UI Semibold',Arial,sans-serif;font-size:30px;color:#1F2937;}" &
+    "#htmlContent{display:grid;grid-template-columns:repeat(10,auto);align-content:start;font-family:'Segoe UI','Segoe UI Semibold',Arial,sans-serif;font-size:30px;color:#1F2937;}" &
     ".htmlViewerEntry,.htmlViewerEntry>div,.hdr{display:contents;}" &
     ".htmlViewerEntry:not(:first-child) .hdr{display:none;}" &
     ".th{position:sticky;top:0;z-index:1;background:#003254;color:#fff;font-weight:600;font-size:26px;letter-spacing:.02em;text-align:left;padding:14px 18px;white-space:nowrap;overflow:hidden;}" &
@@ -217,10 +319,18 @@ VAR _empreendimento = SUBSTITUTE ( SUBSTITUTE ( COALESCE ( SELECTEDVALUE ( fato_
 VAR _cliente = SUBSTITUTE ( SUBSTITUTE ( COALESCE ( SELECTEDVALUE ( fato_atendimentos_cvcrm[cliente] ), "" ), "&", "&amp;" ), "<", "&lt;" )
 VAR _assunto = SUBSTITUTE ( SUBSTITUTE ( COALESCE ( SELECTEDVALUE ( fato_atendimentos_cvcrm[assunto] ), "" ), "&", "&amp;" ), "<", "&lt;" )
 VAR _equipe = COALESCE ( SELECTEDVALUE ( fato_atendimentos_cvcrm[equipe] ), "--" )
-VAR _avaliacaoNum = SELECTEDVALUE ( fato_atendimentos_cvcrm[avaliacao] )
--- mesmo cuidado da faixa de KPIs: checar ISBLANK antes de formatar, não
--- depois (FORMAT de número em branco devolve "", não BLANK()).
-VAR _avaliacao = IF ( ISBLANK ( _avaliacaoNum ), "--", FORMAT ( _avaliacaoNum, "0.0" ) )
+-- Tempos do atendimento (pedido de 15/out/2026), um valor por linha porque o grão da
+-- tabela é o atendimento. Minutos até 1 h, horas até 1 dia e dias acima; o atendimento
+-- ainda aberto não tem pegar nem atender (a coluna é vazia) e mostra "--". O tempo de
+-- finalização também só existe para o finalizado.
+VAR _pegarMin   = SELECTEDVALUE ( fato_atendimentos_cvcrm[tempo_pegar_min] )
+VAR _atenderMin = SELECTEDVALUE ( fato_atendimentos_cvcrm[tempo_atender_min] )
+VAR _totalMin   = SELECTEDVALUE ( fato_atendimentos_cvcrm[tempo_finalizado] )
+VAR _tPegar   = IF ( ISBLANK ( _pegarMin ), "--", IF ( _pegarMin < 60, FORMAT ( _pegarMin, "#,0" ) & " min", IF ( _pegarMin < 1440, FORMAT ( _pegarMin / 60, "#,0.0" ) & " h", FORMAT ( _pegarMin / 1440, "#,0.0" ) & " d" ) ) )
+VAR _tAtender = IF ( ISBLANK ( _atenderMin ), "--", IF ( _atenderMin < 60, FORMAT ( _atenderMin, "#,0" ) & " min", IF ( _atenderMin < 1440, FORMAT ( _atenderMin / 60, "#,0.0" ) & " h", FORMAT ( _atenderMin / 1440, "#,0.0" ) & " d" ) ) )
+VAR _tTotal   = IF ( ISBLANK ( _totalMin ), "--", IF ( _totalMin < 60, FORMAT ( _totalMin, "#,0" ) & " min", IF ( _totalMin < 1440, FORMAT ( _totalMin / 60, "#,0.0" ) & " h", FORMAT ( _totalMin / 1440, "#,0.0" ) & " d" ) ) )
+-- A coluna AVALIAÇÃO saiu da tabela em 15/out/2026 (a pedido do Igor): só 1 atendimento
+-- de 441 tinha avaliação. O dado segue em fato_atendimentos_cvcrm[avaliacao].
 VAR _sit =
     SWITCH (
         SELECTEDVALUE ( fato_atendimentos_cvcrm[situacao] ),
@@ -234,7 +344,8 @@ RETURN
         "<div class='hdr'><div class='th'>PROTOCOLO</div><div class='th'>DATA</div>"
             & "<div class='th'>EMPREENDIMENTO</div><div class='th'>CLIENTE</div>"
             & "<div class='th'>ASSUNTO</div><div class='th'>SITUAÇÃO</div>"
-            & "<div class='th'>EQUIPE</div><div class='th'>AVALIAÇÃO</div></div>"
+            & "<div class='th'>EQUIPE</div><div class='th'>PEGAR</div>"
+            & "<div class='th'>ATENDER</div><div class='th'>FINALIZAÇÃO</div></div>"
             & "<div class='td'>" & _protocolo & "</div>"
             & "<div class='td'>" & _data & "</div>"
             & "<div class='td'>" & _empreendimento & "</div>"
@@ -242,7 +353,9 @@ RETURN
             & "<div class='td'>" & _assunto & "</div>"
             & "<div class='td'>" & _sit & "</div>"
             & "<div class='td'>" & _equipe & "</div>"
-            & "<div class='td'>" & _avaliacao & "</div>"
+            & "<div class='td'>" & _tPegar & "</div>"
+            & "<div class='td'>" & _tAtender & "</div>"
+            & "<div class='td'>" & _tTotal & "</div>"
     )
 
 // =============================================================================
@@ -287,11 +400,11 @@ RETURN
 // Passar o mouse (hover) num cartão expande um bloco de estatísticas (CRIADO
 // HÁ, NA SITUAÇÃO, INTERAÇÕES, ÚLT. ATUALIZAÇÃO), inspirado na tela expandida
 // que você mandou print. Só essas quatro: as três linhas de "VENCIMENTO DE
-// SLA" (por assunto/subassunto/workflow) do print NÃO estão na API do CVDW —
-// os 60 campos de `atendimentos` não têm nada de prazo/SLA, é cálculo
-// interno do CVCRM que não sai no endpoint. Mostrar essas datas aqui seria
-// inventar dado, então ficaram de fora — se a gestão precisar delas, é
-// pedido de novo campo pro time do CVCRM, não algo que o pipeline resolve.
+// SLA" (por assunto/subassunto/workflow) do print NÃO estão no endpoint
+// `atendimentos` do CVDW (os 60 campos não têm prazo/SLA). Atualização de
+// 14/out/2026: o SLA existe em outra rota, relacionamento/atendimentos/listar
+// (slaAssunto, dataVencimentoAssunto, slaSubassunto, slaWorkflow,
+// dataVencimentoWorkflow). Ver PAGINA_ATENDIMENTO_CVCRM.md, seção 7.
 // =============================================================================
 
 // Tabela de apoio (NÃO é medida — cole como TABELA: Modelagem > Nova tabela).
