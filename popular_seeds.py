@@ -11,6 +11,7 @@ import json
 import os
 import re
 import zlib
+from datetime import date, datetime
 from pathlib import Path
 
 from config.settings import RAIZ, carregar_config_pg
@@ -814,9 +815,20 @@ def carregar_gerentes(conn, xlsx: Path) -> int:
 def carregar_headcount_corretores(conn, xlsx: Path) -> int:
     """Carrega silver.dpara_corretor_headcount da planilha manual do backoffice
     (Base Corretores Pafil, aba "Base Pafil") — fonte autoritativa de Gerente/
-    Supervisor por corretor. Só carrega os corretores com "Ativo/Inativo" = Ativo
-    (o pedido do dev: "usar o nome do corretor como chave, referenciando corretores
-    ativos da tabela de headcount" — o resto da planilha é histórico de desligados).
+    Supervisor por corretor.
+
+    Carrega o QUADRO INTEIRO, ativos e desligados, com a flag `eh_ativo`. Até
+    10/set/2026 carregava só os Ativos, e isso furava a página Performance: as linhas
+    da matriz vêm dessa dimensão, então corretor desligado no meio do ano perdia a
+    linha enquanto as vendas dele continuavam na fato, caindo na linha em branco do
+    relacionamento. Quem quer só o time corrente filtra por `eh_ativo`.
+
+    Traz também "Dt contratação" e "Dt desligamento" (data de entrada e de saída),
+    que são o insumo do farol da página Performance. Quando o mesmo nome aparece em
+    mais de uma linha, vale o vínculo ATIVO e, entre vínculos do mesmo status, o de
+    contratação mais recente: é o que diz há quanto tempo a pessoa está na casa hoje.
+    O histórico de todos os vínculos fica no DP-16 (dpara_corretor_headcount_mensal),
+    que despivota linha a linha.
     """
     import openpyxl
     from psycopg import sql
@@ -829,33 +841,181 @@ def carregar_headcount_corretores(conn, xlsx: Path) -> int:
     j_house, j_nome, j_apelido = hdr.index("House"), hdr.index("Nome"), hdr.index("Apelido")
     j_imob, j_ger, j_sup = hdr.index("Imobiliaria"), hdr.index("Gerente"), hdr.index("Supervisor")
     j_ativo = hdr.index("Ativo/Inativo")
+    j_contrat, j_deslig = hdr.index("Dt contratação"), hdr.index("Dt desligamento")
 
-    regs, vistos = [], set()
+    def _data(v) -> date | None:
+        if isinstance(v, datetime):
+            return v.date()
+        return v if isinstance(v, date) else None
+
+    # Célula de texto com data dentro é erro de digitação da planilha — em 09/2026 há
+    # 3 apelidos preenchidos com data. Vira nulo, em vez de gravar "2025-03-06 00:00:00"
+    # como apelido no banco. Só apareceu quando o loader passou a ler o quadro inteiro:
+    # nas linhas de quem está ativo, essas colunas estão limpas.
+    trocados: list[str] = []
+
+    def _texto(v, nome: str = "", col: str = "") -> str | None:
+        if v is None:
+            return None
+        if isinstance(v, (date, datetime)):
+            trocados.append(f"{nome} ({col})")
+            return None
+        return str(v).strip() or None
+
+    por_nome: dict[str, tuple] = {}
     for r in linhas[hdr_idx + 1:]:
         nome = (r[j_nome] or "").strip() if r[j_nome] else ""
-        ativo = (r[j_ativo] or "").strip().lower() if r[j_ativo] else ""
-        if not nome or ativo != "ativo" or nome.lower() in vistos:
+        if not nome:
             continue
-        vistos.add(nome.lower())
-        regs.append((
+        eh_ativo = ((r[j_ativo] or "").strip().lower() == "ativo") if r[j_ativo] else False
+        contrat, deslig = _data(r[j_contrat]), _data(r[j_deslig])
+        reg = (
             nome,
-            (r[j_apelido] or "").strip() if r[j_apelido] else None,
-            (r[j_imob] or "").strip() if r[j_imob] else None,
-            (r[j_house] or "").strip() if r[j_house] else None,
-            (r[j_ger] or "").strip() if r[j_ger] else None,
-            (r[j_sup] or "").strip() if r[j_sup] else None,
-        ))
+            _texto(r[j_apelido], nome, "Apelido"),
+            _texto(r[j_imob], nome, "Imobiliaria"),
+            _texto(r[j_house], nome, "House"),
+            _texto(r[j_ger], nome, "Gerente"),
+            _texto(r[j_sup], nome, "Supervisor"),
+            eh_ativo,
+            contrat,
+            deslig,
+        )
+        # nome repetido (recontratação): fica o vínculo ativo e, no empate, o de
+        # contratação mais recente. Sem data dos dois lados, fica o primeiro.
+        anterior = por_nome.get(nome.lower())
+        if anterior is None or (eh_ativo, contrat or date.min) > (anterior[6], anterior[7] or date.min):
+            por_nome[nome.lower()] = reg
+    regs = list(por_nome.values())
 
     with conn.cursor() as cur:
         cur.execute("TRUNCATE silver.dpara_corretor_headcount")
-        for nome, apelido, imob, house, ger, sup in regs:
+        for reg in regs:
             cur.execute(
                 sql.SQL("INSERT INTO silver.dpara_corretor_headcount "
-                        "(corretor, apelido, imobiliaria, house, gerente, supervisor) "
-                        "VALUES (%s,%s,%s,%s,%s,%s) ON CONFLICT (corretor) DO NOTHING"),
-                (nome, apelido, imob, house, ger, sup),
+                        "(corretor, apelido, imobiliaria, house, gerente, supervisor, "
+                        " eh_ativo, dt_contratacao, dt_desligamento) "
+                        "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s) ON CONFLICT (corretor) DO NOTHING"),
+                reg,
             )
-    log.info("  silver.%-24s <- %3d linhas (aba Base Pafil, só Ativos)", "dpara_corretor_headcount", len(regs))
+    ativos = sum(1 for r in regs if r[6])
+    sem_data = sum(1 for r in regs if r[7] is None)
+    log.info("  silver.%-24s <- %3d linhas (aba Base Pafil, quadro inteiro: %d ativos, "
+             "%d desligados%s)", "dpara_corretor_headcount", len(regs), ativos,
+             len(regs) - ativos,
+             f"; {sem_data} sem Dt contratação" if sem_data else "")
+    if trocados:
+        log.warning("  headcount: %d célula(s) de texto com data dentro, gravadas como "
+                    "nulo — vale avisar o backoffice: %s", len(trocados),
+                    ", ".join(trocados[:5]) + (" ..." if len(trocados) > 5 else ""))
+    return len(regs)
+
+
+def carregar_headcount_mensal(conn, xlsx: Path) -> int:
+    """Carrega silver.dpara_corretor_headcount_mensal (DP-16): a matriz mensal de
+    corretor ativo da MESMA planilha do headcount (aba "Base Pafil"), despivotada
+    para 1 linha por corretor × mês.
+
+    A planilha tem uma coluna por mês (dd/mm/aaaa, de jan/2022 a dez/2026 na carga
+    de setembro de 2026) com 0/1, e é dela que saem as colunas "Meses Ativos 2024"
+    e "Meses Ativos 2025" que o BI legado usava como denominador fixo. Aqui a série
+    inteira vira dado, e quem escolhe a janela é a medida DAX (respeitando o filtro
+    de período da página, em vez de dois anos fixos no código).
+
+    Ao contrário de carregar_headcount_corretores (que só quer o roster corrente),
+    aqui entram todos os corretores da planilha, incluindo desligados: meses ativos
+    são história, e quem saiu em março ainda trabalhou três meses naquele ano.
+
+    O mês corrente costuma estar zerado na planilha (o backoffice preenche depois),
+    o que zeraria o denominador do mês em curso. Por isso a coluna `ativo` efetiva
+    segue a planilha até o último mês que ela preencheu de fato e, dali até o mês
+    corrente, cai para o que as datas de contratação/desligamento dizem. Mês futuro
+    nunca conta como ativo.
+    """
+    import openpyxl
+
+    wb = openpyxl.load_workbook(xlsx, read_only=True, data_only=True)
+    ws = wb["Base Pafil"]
+    linhas = list(ws.iter_rows(values_only=True))
+    hdr_idx = next(i for i, r in enumerate(linhas) if r and any(c == "Nome" for c in r if c) and any(c == "Gerente" for c in r if c))
+    hdr = list(linhas[hdr_idx])
+    j_nome = hdr.index("Nome")
+    j_contrat, j_deslig = hdr.index("Dt contratação"), hdr.index("Dt desligamento")
+
+    # colunas de mês: o cabeçalho vem como texto "dd/mm/aaaa" ou já como data
+    meses: list[tuple[int, date]] = []
+    for j, h in enumerate(hdr):
+        if isinstance(h, datetime):
+            meses.append((j, h.date().replace(day=1)))
+        elif isinstance(h, date):
+            meses.append((j, h.replace(day=1)))
+        elif isinstance(h, str) and re.fullmatch(r"\d{2}/\d{2}/\d{4}", h.strip()):
+            d, m, a = h.strip().split("/")
+            meses.append((j, date(int(a), int(m), int(d)).replace(day=1)))
+    if not meses:
+        log.warning("  headcount mensal: nenhuma coluna de mês na aba Base Pafil — nada a carregar.")
+        return 0
+
+    def _data(v) -> date | None:
+        if isinstance(v, datetime):
+            return v.date()
+        return v if isinstance(v, date) else None
+
+    def _mes(d: date | None) -> date | None:
+        return d.replace(day=1) if d else None
+
+    hoje_mes = date.today().replace(day=1)
+
+    # 1ª passada: lê a planilha. Nome repetido (o mesmo corretor com uma linha
+    # antiga de desligamento e outra de recontratação) colapsa em max() por mês.
+    brutos: dict[tuple[str, date], dict] = {}
+    nomes: dict[str, str] = {}                      # chave minúscula -> grafia da planilha
+    for r in linhas[hdr_idx + 1:]:
+        nome = (r[j_nome] or "").strip() if r[j_nome] else ""
+        if not nome:
+            continue
+        nomes.setdefault(nome.lower(), nome)
+        nome = nomes[nome.lower()]
+        contrat, deslig = _data(r[j_contrat]), _data(r[j_deslig])
+        m_contrat, m_deslig = _mes(contrat), _mes(deslig)
+        for j, mes in meses:
+            planilha = 1 if str(r[j]).strip() in ("1", "1.0", "True") else 0
+            contrato = None
+            if m_contrat:
+                contrato = 1 if mes >= m_contrat and (m_deslig is None or mes <= m_deslig) else 0
+            reg = brutos.setdefault((nome, mes), {"planilha": 0, "contrato": None,
+                                                  "contratacao": None, "desligamento": None})
+            reg["planilha"] = max(reg["planilha"], planilha)
+            if contrato is not None:
+                reg["contrato"] = max(reg["contrato"] or 0, contrato)
+            reg["contratacao"] = max(filter(None, (reg["contratacao"], contrat)), default=None)
+            reg["desligamento"] = max(filter(None, (reg["desligamento"], deslig)), default=None)
+
+    # 2ª passada: fronteira de preenchimento da planilha (último mês com algum 1) e
+    # cálculo do `ativo` efetivo.
+    fronteira = max((mes for (_, mes), reg in brutos.items() if reg["planilha"] == 1), default=None)
+    regs = []
+    for (nome, mes), reg in sorted(brutos.items()):
+        if fronteira and mes <= fronteira:
+            ativo = reg["planilha"]
+        elif mes <= hoje_mes:
+            ativo = reg["contrato"] if reg["contrato"] is not None else reg["planilha"]
+        else:
+            ativo = 0
+        regs.append((nome, mes, ativo, reg["planilha"], reg["contrato"],
+                     reg["contratacao"], reg["desligamento"]))
+
+    with conn.cursor() as cur:
+        cur.execute("TRUNCATE silver.dpara_corretor_headcount_mensal")
+        cur.executemany(
+            "INSERT INTO silver.dpara_corretor_headcount_mensal "
+            "(corretor, mes, ativo, ativo_planilha, ativo_contrato, dt_contratacao, dt_desligamento) "
+            "VALUES (%s,%s,%s,%s,%s,%s,%s) ON CONFLICT (corretor, mes) DO NOTHING",
+            regs,
+        )
+    ativos = sum(r[2] for r in regs)
+    log.info("  silver.%-24s <- %5d linhas (%d corretores × %d meses, %d meses-corretor ativos; "
+             "planilha preenchida até %s)", "dpara_corretor_headcount_mensal", len(regs),
+             len(nomes), len(meses), ativos, fronteira.strftime("%m/%Y") if fronteira else "-")
     return len(regs)
 
 
@@ -903,6 +1063,103 @@ def carregar_profissoes(conn, xlsx: Path) -> int:
             )
     log.info("  silver.%-24s <- %4d linhas (de %d na planilha)", "dpara_profissoes", len(regs), len(linhas) - 1)
     return len(regs)
+
+
+def ler_ramais(xlsx: Path) -> tuple[list[tuple], list[str], str]:
+    """Lê 'RAMAIS ATIVOS 2026.xlsx' (telefonia da MDnet) e devolve (registros, avisos, aba).
+
+    A planilha tem uma aba só, em seções: uma linha 'Ramal | SEDE - Setor' abre a seção da
+    sede e uma 'Ramal | HOUSE - Setor' abre a da House. Cada linha seguinte é um ramal na
+    coluna A e 'Setor - Responsável' na B ('Suprimentos 1 - Maria', 'Financeiro - Vago').
+    A coluna C (WhatsApp) tem celular de funcionário e NÃO é lida de propósito: o min_col/
+    max_col abaixo a deixa de fora.
+
+    Cada registro: (ramal, unidade, setor, setor_grupo, responsavel, eh_vago, descricao).
+    """
+    import openpyxl
+
+    wb = openpyxl.load_workbook(xlsx, read_only=True, data_only=True)
+    ws = wb.worksheets[0]
+    aba = ws.title
+    linhas = list(ws.iter_rows(min_col=1, max_col=2, values_only=True))
+    wb.close()
+
+    def _txt(v) -> str | None:
+        if v is None:
+            return None
+        if isinstance(v, float) and v.is_integer():
+            v = int(v)
+        s = re.sub(r"\s+", " ", str(v)).strip()
+        return s or None
+
+    regs: list[tuple] = []
+    avisos: list[str] = []
+    vistos: set[str] = set()
+    unidade: str | None = None
+    for n, (a, b) in enumerate(linhas, start=1):
+        ramal, desc = _txt(a), _txt(b)
+        if ramal and ramal.lower() == "ramal":
+            # Cabeçalho da seção: 'SEDE - Setor' ou 'HOUSE - Setor'.
+            unidade = ((desc or "").split(" - ")[0].strip().upper()) or None
+            continue
+        # Pula o que não é ramal (a célula A1 vem com '#VALUE!') e o que vem antes da 1ª seção.
+        if not ramal or not desc or unidade is None or not re.fullmatch(r"\d{1,5}", ramal):
+            continue
+        if ramal in vistos:
+            avisos.append(f"linha {n}: ramal {ramal} repetido, ficou a primeira ocorrência")
+            continue
+        vistos.add(ramal)
+        setor, _, resp = desc.partition(" - ")
+        setor, resp = setor.strip(), resp.strip() or None
+        setor_grupo = re.sub(r"\s+\d+$", "", setor)  # 'Suprimentos 3' vira 'Suprimentos'
+        vago = bool(resp) and resp.lower() == "vago"
+        if vago or (resp and resp.upper() == unidade):  # 'Corretores 1 - House': ramal de uso comum
+            resp = None
+        regs.append((ramal, unidade, setor, setor_grupo, resp, vago, desc))
+    return regs, avisos, aba
+
+
+def carregar_ramais(conn, xlsx: Path) -> int:
+    """Carrega silver.dpara_ramais (telefonia da MDnet) da planilha de ramais. A tabela nasce
+    no sql/silver/mdnet.sql (aplicar_silver.py --so-mdnet), e não no seeds.sql, porque a view
+    silver.mdnet_chamadas depende dela."""
+    from psycopg import sql
+
+    regs, avisos, aba = ler_ramais(xlsx)
+    for aviso in avisos:
+        log.warning("  ramais: %s", aviso)
+    if not regs:
+        log.warning("  ramais: nenhuma linha lida de %s, dpara_ramais mantida como está.", xlsx.name)
+        return 0
+    with conn.cursor() as cur:
+        cur.execute("SELECT to_regclass('silver.dpara_ramais')")
+        if cur.fetchone()[0] is None:
+            log.error("  silver.dpara_ramais não existe. Rode antes: python aplicar_silver.py --so-mdnet")
+            return 0
+        origem_txt = f"SharePoint: {xlsx.name} (aba {aba})"
+        cur.execute("TRUNCATE silver.dpara_ramais")
+        for ramal, unidade, setor, setor_grupo, resp, vago, desc in regs:
+            cur.execute(
+                sql.SQL("INSERT INTO silver.dpara_ramais "
+                        "(ramal, unidade, setor, setor_grupo, responsavel, eh_vago, descricao, _origem) "
+                        "VALUES (%s,%s,%s,%s,%s,%s,%s,%s)"),
+                (ramal, unidade, setor, setor_grupo, resp, vago, desc, origem_txt),
+            )
+    por_unidade = {u: sum(1 for r in regs if r[1] == u) for u in sorted({r[1] for r in regs})}
+    log.info("  silver.%-24s <- %4d ramais (%s; %d vagos)", "dpara_ramais", len(regs),
+             ", ".join(f"{u} {n}" for u, n in por_unidade.items()), sum(1 for r in regs if r[5]))
+    return len(regs)
+
+
+def _ramais_padrao() -> str | None:
+    """Sem --ramais nem DEPARA_RAMAIS_XLSX, usa o xlsx da pasta de de-paras
+    (DEPARA_DIR/depara_ramais/arquivo), a mesma que o montar_estrutura_depara.py preenche."""
+    pasta = os.getenv("DEPARA_DIR")
+    if not pasta:
+        return None
+    achados = sorted(p for p in (Path(pasta) / "depara_ramais" / "arquivo").glob("*.xlsx")
+                     if not p.name.startswith("~$"))
+    return str(achados[0]) if achados else None
 
 
 # Escopo de colunas do perfil de cliente (DP-15): das 148 colunas do CSV legado,
@@ -1359,7 +1616,8 @@ def main() -> int:
     ap.add_argument("--gerentes", help="caminho de depara_gerentes.xlsx (recarrega "
                                        "dpara_gerente_contexto). Default: variável DEPARA_GERENTES_XLSX do .env")
     ap.add_argument("--headcount-corretores", help="caminho de Base Corretores Pafil.xlsx (recarrega "
-                                       "dpara_corretor_headcount, só Ativos). Default: HEADCOUNT_CORRETORES_XLSX do .env")
+                                       "dpara_corretor_headcount, só Ativos, e dpara_corretor_headcount_mensal, "
+                                       "a matriz de meses ativos com todos). Default: HEADCOUNT_CORRETORES_XLSX do .env")
     ap.add_argument("--leads-apoio", help="caminho de Base de Leads.xlsm (aba Apoio: recarrega os 4 "
                                           "de-paras de lead vivos). Default: DEPARA_LEADS_XLSM do .env")
     ap.add_argument("--etapa-precadastro", help="caminho de Base - Crédito.xlsm (aba Apoio: recarrega "
@@ -1391,6 +1649,10 @@ def main() -> int:
     ap.add_argument("--profissoes", help="caminho de 'de_para profissões.xlsx' (recarrega "
                                           "silver.dpara_profissoes, DP-07). "
                                           "Default: DEPARA_PROFISSOES_XLSX do .env")
+    ap.add_argument("--ramais", nargs="?", const="", help="caminho de 'RAMAIS ATIVOS 2026.xlsx' "
+                                          "(recarrega silver.dpara_ramais, telefonia da MDnet). "
+                                          "Pode ser dado sem valor. Default: DEPARA_RAMAIS_XLSX do "
+                                          ".env, ou o xlsx de DEPARA_DIR/depara_ramais/arquivo")
     ap.add_argument("--perfil-cliente-precadastro", help="caminho de perfil_cliente_precadastro.csv "
                                           "(recarrega silver.perfil_cliente_precadastro, DP-15). "
                                           "Default: PERFIL_CLIENTE_PRECADASTRO_CSV do .env")
@@ -1418,6 +1680,7 @@ def main() -> int:
     viabilidade_path = args.viabilidade or os.getenv("VIABILIDADE_XLSX")
     distratos_2025_path = args.distratos_2025 or os.getenv("DISTRATOS_2025_XLSX")
     profissoes_path = args.profissoes or os.getenv("DEPARA_PROFISSOES_XLSX")
+    ramais_path = args.ramais or os.getenv("DEPARA_RAMAIS_XLSX") or _ramais_padrao()
     perfil_precadastro_path = (args.perfil_cliente_precadastro
                                 or os.getenv("PERFIL_CLIENTE_PRECADASTRO_CSV"))
     perfil_reserva_path = args.perfil_cliente_reserva or os.getenv("PERFIL_CLIENTE_RESERVA_CSV")
@@ -1458,7 +1721,10 @@ def main() -> int:
             hx = Path(headcount_path)
             if hx.exists():
                 total += carregar_headcount_corretores(conn, hx)
-                n_seeds += 1
+                # mesma planilha, outro grão: a matriz mensal (DP-16) que alimenta
+                # os "meses ativos" da página Performance.
+                total += carregar_headcount_mensal(conn, hx)
+                n_seeds += 2
             else:
                 log.warning("  headcount xlsx não encontrado (%s) — dpara_corretor_headcount mantida como está.", hx)
         if apoio_ok:
@@ -1535,6 +1801,13 @@ def main() -> int:
                 n_seeds += 1
             else:
                 log.warning("  profissoes xlsx não encontrado (%s) — dpara_profissoes mantida como está.", pf)
+        if ramais_path:
+            rm = Path(ramais_path)
+            if rm.exists():
+                total += carregar_ramais(conn, rm)
+                n_seeds += 1
+            else:
+                log.warning("  ramais xlsx não encontrado (%s), dpara_ramais mantida como está.", rm)
         if perfil_precadastro_path:
             pp = Path(perfil_precadastro_path)
             if pp.exists():

@@ -9,13 +9,26 @@
 #                                  etc.) E valida que é único na amostra.
 #                   <nome_campo> -> fixa manualmente o campo (ex.: idreserva).
 #                   ~ (null)    -> força o uso do hash técnico da linha.
+#   sempre_full : opcional (padrão false). Quando true, o modo --incremental
+#                 ignora a janela `a_partir_data_referencia` e recarrega o
+#                 objeto inteiro. Serve para os objetos em que o
+#                 `data_referencia` da API acompanha só a MOVIMENTAÇÃO do
+#                 registro (em `reservas`, a mudança de situação), e não a
+#                 edição de um campo isolado: sem isso, uma correção feita no
+#                 CVCRM depois da última movimentação nunca mais é relida.
+#                 Só vale a pena em objeto pequeno — ver R26 em
+#                 REGRAS_NEGOCIO.md.
 #
 # Se o id detectado/fixado NÃO for único na amostra (caso típico de tabelas
 # "filhas", ex.: comissões por reserva), a descoberta cai automaticamente para
 # o hash técnico da linha (_hash_linha), evitando perda de registros no upsert.
 # =============================================================================
 objetos:
-  - { nome_logico: reservas,                        path: reservas,                       id: auto }
+  # sempre_full: os campos customizados da reserva ("Gerente Responsavel",
+  # "Classificação Vendas Internas", ...) são corrigidos à mão pelo backoffice
+  # dias depois da venda, sem mexer na situação — e o incremental não os releria.
+  # São só ~10 páginas (4,9 mil reservas), cerca de 35 s por execução.
+  - { nome_logico: reservas,                        path: reservas,                       id: auto, sempre_full: true }
   - { nome_logico: reservas_contratos,              path: reservas/contratos,             id: auto }
   - { nome_logico: reservas_comissoes,              path: reservas/comissoes,             id: auto }
   - { nome_logico: reservas_historico_situacoes,    path: reservas/historico/situacoes,   id: auto }
@@ -36,3 +49,8 @@ objetos:
   - { nome_logico: pessoas_profissional,            path: pessoas/profissional,           id: auto }
   - { nome_logico: campos_adicionais,               path: campos_adicionais,              id: auto }
   - { nome_logico: atendimentos_cvcrm,               path: atendimentos,                   id: auto }
+  # Minutos que cada atendimento ficou em cada situação do workflow (uma linha por etapa
+  # por onde passou; `data_cad` é o momento em que SAIU da etapa). É o que dá o tempo de
+  # pegar e de atender (ver PAGINA_ATENDIMENTO_CVCRM.md, seção 7). id fixo porque o
+  # auto não reconhece `idtempo` a partir do nome do objeto; é único e igual a `referencia`.
+  - { nome_logico: atendimentos_workflow_tempo,      path: atendimentos/workflow/tempo,    id: idtempo }

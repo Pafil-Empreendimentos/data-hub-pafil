@@ -30,14 +30,22 @@ Seleção Tipo de Venda = {
 //
 // TAMBÉM não use SELECTEDVALUE na coluna de texto da tabela do parâmetro pra
 // isso — dá o erro "a coluna faz parte da chave composta..." (o NAMEOF cria uma
-// chave composta interna nas 3 colunas do parâmetro; ler só 1 delas por fora,
-// no mesmo visual em que a tabela já está ligada num eixo, quebra).
+// chave composta interna nas 3 colunas do parâmetro; ler só 1 delas por fora
+// quebra, mesmo fora do visual do parâmetro — ver R2 abaixo).
 //
-// A forma certa (suportada oficialmente p/ esse cenário) é ISSELECTEDMEASURE():
-// verifica diretamente qual MEDIDA está ativa no parâmetro, sem tocar nas
-// colunas da tabela. Cole isso na tabela "Medidas" (não na tabela do parâmetro).
+// A forma "oficial" é ISSELECTEDMEASURE(): verifica diretamente qual MEDIDA
+// está ativa no parâmetro, sem tocar nas colunas da tabela. Cole isso na
+// tabela "Medidas" (não na tabela do parâmetro).
+//
+// LIMITAÇÃO (ago/2026, R2 — ver ISSUE abaixo): ISSELECTEDMEASURE só enxerga a
+// seleção quando a medida dependente está no MESMO poço/role do visual que o
+// parâmetro de campo. Em gráfico combo (coluna + linha), Y (colunas) e Y2
+// (linha) são roles diferentes — a seleção feita em Y não propaga pra Y2. Use
+// este padrão só quando VGV e QTD ficam no MESMO poço (ex.: card, tabela,
+// gráfico de coluna simples). Para combo chart / tooltip cruzando roles, use
+// o padrão "Filtro Tipo de Venda" logo abaixo.
 // -----------------------------------------------------------------------------
-QTD Tipo de Venda Selecionado =
+QTD Tipo de Venda Selecionado (mesmo poço) =
 SWITCH (
     TRUE(),
     ISSELECTEDMEASURE ( [VGV Bruto] ),    [QTD Bruto],
@@ -45,3 +53,95 @@ SWITCH (
     ISSELECTEDMEASURE ( [VGV Distrato] ), [QTD Distratos],
     [QTD Bruto]                           -- default (nenhuma seleção / múltiplas)
 )
+
+// =============================================================================
+// ISSUE (18/ago/2026): no .pbix "Esteira de reservas", página "Vendas Geral",
+// o visual "VGV x Mês" é um lineClusteredColumnComboChart com o parâmetro de
+// campo em Y (colunas = VGV) e [QTD Tipo de Venda Selecionado] em Y2 (linha =
+// QTD). Resultado: trocar o slicer pra Distrato mudava o VGV das colunas mas a
+// QTD da linha ficava travada no valor de Bruto (ISSELECTEDMEASURE nunca via
+// TRUE pra nenhum branch, sempre caía no default). Confirmado testando a
+// medida isolada via DAX query direto no modelo: com o parâmetro forçado em
+// "VGV Distrato", [QTD Tipo de Venda Selecionado] ainda devolvia o valor de
+// [QTD Bruto]. O mesmo problema existe no gráfico "Realizado, Forecast e Meta
+// Start por Mês/Tri", que usa essa medida no poço de Tooltips (outro role
+// diferente de Y).
+//
+// CORREÇÃO: trocar o field parameter (que só funciona bem dentro do mesmo
+// poço) por uma tabela desconectada comum — sem NAMEOF, sem chave composta —
+// lida com SELECTEDVALUE simples. Filtro de coluna comum propaga por todo o
+// visual, não só pelo poço onde o slicer está.
+// =============================================================================
+
+Filtro Tipo de Venda =
+DATATABLE (
+    "Tipo de Venda", STRING,
+    "Ordem", INTEGER,
+    {
+        { "Bruto", 0 },
+        { "Líquido", 1 },
+        { "Distrato", 2 }
+    }
+)
+// Coluna "Tipo de Venda" ordenada por "Ordem" (Modelagem -> Classificar por
+// coluna), pra manter Bruto/Líquido/Distrato na ordem certa no slicer.
+
+VGV Tipo de Venda Selecionado =
+SWITCH (
+    TRUE (),
+    SELECTEDVALUE ( 'Filtro Tipo de Venda'[Tipo de Venda] ) = "Líquido",  [VGV Líquido],
+    SELECTEDVALUE ( 'Filtro Tipo de Venda'[Tipo de Venda] ) = "Distrato", [VGV Distrato],
+    [VGV Bruto]                                                          -- default
+)
+
+QTD Tipo de Venda Selecionado =
+SWITCH (
+    TRUE (),
+    SELECTEDVALUE ( 'Filtro Tipo de Venda'[Tipo de Venda] ) = "Líquido",  [QTD Líquido],
+    SELECTEDVALUE ( 'Filtro Tipo de Venda'[Tipo de Venda] ) = "Distrato", [QTD Distratos],
+    [QTD Bruto]                                                          -- default
+)
+
+// Como usar no Desktop:
+//   1. Slicer/segmentação: use a coluna "Tipo de Venda" desta tabela nova (no
+//      lugar da coluna de campos do parâmetro antigo).
+//   2. Em CADA visual, troque o campo do parâmetro de campo pela medida
+//      [VGV Tipo de Venda Selecionado] (columns/valores) e [QTD Tipo de Venda
+//      Selecionado] (linha/tooltip/onde estiver). Como são medidas normais,
+//      funcionam em qualquer poço do visual, inclusive combo chart.
+//   3. O parâmetro de campo "Seleção Tipo de Venda" continua válido pra
+//      visuais simples (card, tabela, coluna única) onde VGV e QTD ficam no
+//      mesmo poço — não precisa migrar esses.
+
+// =============================================================================
+// Botão Mês / Trimestre no gráfico "Realizado, Forecast e Meta Start por Mês/Tri"
+// (pedido da reunião de 02/out/2026 com diretores e gerentes comerciais).
+//
+// Por que não o drill: quem não usa BI não acha a setinha de drill up/down. Aqui o
+// usuário clica num botão com o nome do que quer ver e o eixo troca sozinho.
+//
+// Este parâmetro troca apenas o EIXO (poço Category) desse gráfico. Como só o
+// eixo muda, não esbarra na limitação do ISSELECTEDMEASURE descrita acima (que é
+// sobre medidas em poços diferentes). Os valores continuam somando certo no
+// trimestre: Realizado, Forecast, Meta Start e Meta Replan são somas simples.
+//
+// Criar pela interface (tabela nova é sempre passo de UI neste projeto):
+//   1. Modelagem -> Novo parâmetro -> Campos. Nome: Granularidade Eixo.
+//   2. Adicione dim_calendario[mes_nome] e depois dim_calendario[trimestre].
+//      Deixe marcado "Adicionar segmentação a esta página".
+//   3. Abra a tabela criada e deixe o DAX assim (só renomeia os rótulos):
+// =============================================================================
+
+Granularidade Eixo = {
+    ("Mês", NAMEOF('dim_calendario'[mes_nome]), 0),
+    ("Trimestre", NAMEOF('dim_calendario'[trimestre]), 1)
+}
+
+// Depois do parâmetro criado:
+//   4. No combo chart, tire trimestre e mes_nome do poço Category e arraste a coluna
+//      "Granularidade Eixo" (a visível, de texto) no lugar.
+//   5. Na segmentação criada: Formatar -> Estilo "Bloco" (botões), orientação
+//      horizontal, "Seleção única" LIGADA e "Selecionar tudo" DESLIGADO. Selecione
+//      "Mês" e salve assim, para o gráfico nunca ficar sem eixo.
+//   6. Ordem do eixo: mes_nome já tem sortByColumn = mes, então sai de janeiro a
+//      dezembro; trimestre ordena T1..T4 em ordem alfabética. Conferir no clique.

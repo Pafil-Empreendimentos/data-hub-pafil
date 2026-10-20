@@ -2311,3 +2311,52 @@ CREATE TABLE IF NOT EXISTS bronze.atendimentos_cvcrm_snapshot (
 );
 CREATE UNIQUE INDEX IF NOT EXISTS ux_atendimentos_cvcrm_snapshot_dia ON bronze.atendimentos_cvcrm_snapshot (_data_snapshot, idatendimento);
 CREATE INDEX IF NOT EXISTS ix_atendimentos_cvcrm_snapshot_data ON bronze.atendimentos_cvcrm_snapshot (_data_snapshot);
+
+-- ===== atendimentos_workflow_tempo (atendimentos/workflow/tempo) =====
+-- Minutos que cada atendimento do CVCRM ficou em cada situacao do workflow. Uma linha por
+-- etapa por onde o atendimento passou: `tempo` e quanto ficou nela (em minutos) e `data_cad`
+-- e o momento em que SAIU dela. A situacao atual do atendimento ainda nao tem linha (ela so
+-- nasce quando ele sai da etapa). E o que permite medir o tempo de pegar e de atender
+-- (powerbi/PAGINA_ATENDIMENTO_CVCRM.md, secao 7). A soma dos `tempo` de um atendimento
+-- bate com atendimentos_cvcrm.tempo_finalizado (396 de 413 finalizados, diferenca maxima de 4 min).
+-- Tipos conferidos em 14/out/2026 sobre os 1.456 registros: todos os campos numericos vem
+-- inteiros, `referencia` e igual a `idtempo` (unico, serve de chave do upsert) e `sigla`
+-- vem vazia em todas as linhas.
+CREATE TABLE IF NOT EXISTS bronze.atendimentos_workflow_tempo (
+    _id_tecnico bigint GENERATED ALWAYS AS IDENTITY,
+    referencia numeric,
+    referencia_data timestamptz,
+    ativo text,
+    idtempo numeric,
+    idatendimento numeric,
+    idsituacao numeric,
+    situacao text,
+    sigla text,
+    tempo numeric,
+    data_cad timestamptz,
+    _hash_linha text NOT NULL,
+    _data_extracao timestamptz NOT NULL DEFAULT now(),
+    _pagina integer,
+    CONSTRAINT pk_atendimentos_workflow_tempo PRIMARY KEY (_id_tecnico)
+);
+CREATE UNIQUE INDEX IF NOT EXISTS ux_atendimentos_workflow_tempo_chave ON bronze.atendimentos_workflow_tempo (idtempo);
+CREATE TABLE IF NOT EXISTS bronze.atendimentos_workflow_tempo_snapshot (
+    _id_snapshot bigint GENERATED ALWAYS AS IDENTITY,
+    _data_snapshot date NOT NULL DEFAULT CURRENT_DATE,
+    referencia numeric,
+    referencia_data timestamptz,
+    ativo text,
+    idtempo numeric,
+    idatendimento numeric,
+    idsituacao numeric,
+    situacao text,
+    sigla text,
+    tempo numeric,
+    data_cad timestamptz,
+    _hash_linha text,
+    _data_extracao timestamptz,
+    _pagina integer,
+    CONSTRAINT pk_atendimentos_workflow_tempo_snapshot PRIMARY KEY (_id_snapshot)
+);
+CREATE UNIQUE INDEX IF NOT EXISTS ux_atendimentos_workflow_tempo_snapshot_dia ON bronze.atendimentos_workflow_tempo_snapshot (_data_snapshot, idtempo);
+CREATE INDEX IF NOT EXISTS ix_atendimentos_workflow_tempo_snapshot_data ON bronze.atendimentos_workflow_tempo_snapshot (_data_snapshot);

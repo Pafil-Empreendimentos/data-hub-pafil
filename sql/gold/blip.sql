@@ -161,7 +161,19 @@ SELECT
     t.prioridade,
     t.avaliacao,
     t.id_campanha,
-    t.qtd_tags
+    t.qtd_tags,
+
+    -- --- hora do dia -----------------------------------------------------
+    -- Hora (0 a 23) em que o ticket entrou, no horário de São Paulo. O fuso é
+    -- explícito pelo mesmo motivo de data_criacao na silver: o Desktop converte
+    -- timestamptz para o fuso da máquina e o Serviço/gateway não, então uma hora
+    -- calculada no DAX sairia certa no notebook e três horas adiantada depois de
+    -- publicar. Vem da criação (storage_date), que é quando a demanda chega, e
+    -- não da abertura, que é quando o atendente pega o ticket. Fica no FIM da
+    -- lista de propósito: CREATE OR REPLACE VIEW só aceita coluna nova no fim, e
+    -- assim dá para aplicar sem dropar a view (o DROP + CREATE, rodado por quem
+    -- não é o pafil_app, deixa a view sem permissão de leitura para o pafil_bi).
+    EXTRACT(HOUR FROM t.storage_date AT TIME ZONE 'America/Sao_Paulo')::int AS hora_criacao
 FROM silver.blip_tickets t
 LEFT JOIN gold.dim_empreendimento e
        ON silver.conformar_empreendimento(t.empreendimento_tag) = e.empreendimento_conformado;

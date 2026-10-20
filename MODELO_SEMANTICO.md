@@ -175,6 +175,16 @@ dim_perfil_cliente[documento_chave] ──1:*── fato_reservas[documento_chav
   `dim_calendario` (o sugerido é `data_venda`) e manter os demais inativos,
   ativando-os sob demanda dentro de uma medida específica, com a função
   `USERELATIONSHIP`.
+- `dim_estrutura` e `dim_ivv` são fotos de "hoje" (estoque e curva padrão de IVV),
+  então **não devem ter relacionamento ativo com `dim_calendario`**. Em 2 de outubro
+  de 2026, `dim_estrutura[data_venda]` e `dim_ivv[data_lancamento]` estavam ativos, e
+  o filtro de ano da página Vendas Geral cortava a estrutura para só as unidades
+  vendidas em 2026. O resultado: o estoque (que não tem data de venda) sumia do
+  gráfico Empreendimento x Estoque, `m_ivv_padrao` ficava em branco, e o
+  `% Vendido Acumulado` dividia por 5 ou 13 unidades em vez de centenas, gerando
+  valores como 8800%. Os dois relacionamentos ficam **inativos**; se algum dia
+  precisar da data de venda da unidade, ative-o dentro da medida com
+  `USERELATIONSHIP`.
 - `dim_empreendimento` pode se relacionar com `dim_unidade` (formando uma estrutura
   em floco de neve, ou "snowflake") ou diretamente com a fato. O recomendado é
   começar ligando direto à fato, por ser mais simples de manter.

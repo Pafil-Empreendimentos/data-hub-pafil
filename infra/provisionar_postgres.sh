@@ -108,7 +108,12 @@ local   all             all                                     scram-sha-256
 host    all             all             127.0.0.1/32            scram-sha-256
 host    all             all             ::1/128                 scram-sha-256
 # host  pafil_dw        pafil_bi        10.0.0.0/16             scram-sha-256   # gateway Power BI (7.5)
+# host  pafil_dw        pafil_n8n       172.16.0.0/12           scram-sha-256   # automacao de reporting
 HBA
+# ATENÇÃO: este bloco SOBRESCREVE o pg_hba.conf inteiro. Se a automação de
+# reporting já estiver liberada (linha do pafil_n8n descomentada), reexecutar
+# este script derruba o acesso dela e o envio para em silêncio — os prints
+# simplesmente deixam de chegar. Descomente a linha acima ANTES de rodar de novo. Ver automacao_reporting/README.md seção 3.
 chown postgres:postgres "${PGCONF_DIR}/pg_hba.conf"
 chmod 640 "${PGCONF_DIR}/pg_hba.conf"
 

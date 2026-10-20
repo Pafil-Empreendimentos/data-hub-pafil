@@ -80,12 +80,22 @@ SELECT id_unidade, id_empreendimento, empreendimento, etapa, bloco, unidade,
        preco, preco_m2, situacao, eh_vendida
 FROM silver.unidades;
 
--- Corretor ATIVO, direto do headcount do backoffice (21/jul/2026) — SEM join com
--- silver.corretores: esse join é o que gerava nome duplicado (mesmo corretor com
--- 2+ cadastros/id_corretor no CVDW casando com a mesma linha do headcount) e campos
--- vazios (LEFT JOIN de corretor fora do headcount) na gold.dim_corretor. Aqui o
--- grão é 1 corretor ATIVO por nome (silver.dpara_corretor_headcount já carrega só
--- Ativos e já é 1 linha por nome).
+-- Corretor do headcount do backoffice (21/jul/2026) — SEM join com silver.corretores:
+-- esse join é o que gerava nome duplicado (mesmo corretor com 2+ cadastros/id_corretor
+-- no CVDW casando com a mesma linha do headcount) e campos vazios (LEFT JOIN de
+-- corretor fora do headcount) na gold.dim_corretor.
+--
+-- Grão: 1 linha por `corretor_chave`. Desde 10/set/2026 a view traz o QUADRO INTEIRO
+-- (ativos e desligados, com `eh_ativo` para filtrar) — antes eram só os Ativos, e as
+-- linhas da matriz da página Performance vinham daqui, então quem saía no meio do ano
+-- sumia da tela enquanto as vendas continuavam no Total, pela linha em branco do
+-- relacionamento. Quem quer só o time corrente filtra `eh_ativo` na página.
+--
+-- O DISTINCT ON existe por causa desse grão: a tabela silver tem o NOME como chave, e
+-- duas grafias diferentes do mesmo nome (acento ou caixa) colapsariam na mesma
+-- `corretor_chave`, duplicando a linha e quebrando o lado "1" dos três
+-- relacionamentos no Power BI. Com 258 nomes o risco deixou de ser teórico. Em caso de
+-- empate fica o vínculo ativo e, entre iguais, a contratação mais recente.
 --
 -- RELACIONAR NO POWER BI POR `corretor_chave` (não por `corretor`): a chave é
 -- minúscula e sem acento, então absorve a divergência de digitação entre o
@@ -96,9 +106,19 @@ FROM silver.unidades;
 -- leads e pré-cadastros ganham a classificação que a reserva já tem via
 -- dpara_gerente_contexto. A junção usa `imobiliaria` (não a coluna `house` do
 -- headcount, que tem linhas erradas) — decisão do dev em 21/jul/2026.
+--
+-- Datas de entrada/saída (10/set/2026): `dt_contratacao` é o começo do vínculo
+-- CORRENTE do corretor, e é o que dá o farol branco da página Performance ("não
+-- apto/entrada recente" = pouco tempo de casa e nenhuma venda). Para quem está ativo
+-- `dt_desligamento` normalmente é vazia; quando vem preenchida, é a janela em que o
+-- backoffice lançou a saída antes de virar o status. `meses_de_casa` é conveniência
+-- para slicer/faixa e vale para a data em que o Power BI atualizou o modelo; a medida
+-- do farol recalcula em DAX contra a data de referência da página, então um modelo
+-- desatualizado não pinta ninguém de errado.
 DROP VIEW IF EXISTS gold.dim_corretor_headcount CASCADE;
 CREATE VIEW gold.dim_corretor_headcount AS
-SELECT silver.nome_proprio(h.corretor)   AS corretor,
+SELECT DISTINCT ON (silver.chave_nome(h.corretor))
+       silver.nome_proprio(h.corretor)   AS corretor,
        silver.chave_nome(h.corretor)     AS corretor_chave,
        h.apelido,
        h.imobiliaria,
@@ -107,10 +127,24 @@ SELECT silver.nome_proprio(h.corretor)   AS corretor,
        silver.nome_proprio(h.supervisor) AS supervisor,   -- (o HC alterna CAIXA ALTA e Title Case)
        ih.share,
        ih.house_parcerias,
-       ih.regional
+       ih.regional,
+       h.eh_ativo,
+       h.dt_contratacao,
+       h.dt_desligamento,
+       -- meses de CALENDÁRIO desde o mês de entrada (quem entrou em 20/08 tem 1 mês
+       -- em qualquer dia de setembro), na mesma convenção da medida [Meses de Casa]
+       -- e da série mensal de DP-16 — o dia do mês não muda nada em nenhuma das duas.
+       CASE WHEN h.dt_contratacao IS NOT NULL
+            THEN greatest(
+                     (date_part('year',  coalesce(h.dt_desligamento, current_date))
+                    - date_part('year',  h.dt_contratacao)) * 12
+                   + (date_part('month', coalesce(h.dt_desligamento, current_date))
+                    - date_part('month', h.dt_contratacao)), 0)::int
+       END                               AS meses_de_casa
 FROM silver.dpara_corretor_headcount h
 LEFT JOIN silver.dpara_imobiliaria_house ih
-       ON silver.chave_nome(ih.imobiliaria) = silver.chave_nome(h.imobiliaria);
+       ON silver.chave_nome(ih.imobiliaria) = silver.chave_nome(h.imobiliaria)
+ORDER BY silver.chave_nome(h.corretor), h.eh_ativo DESC, h.dt_contratacao DESC NULLS LAST;
 
 -- Corretor + equipe. FONTE PRIMÁRIA da equipe (21/jul/2026, passo atrás): a planilha
 -- manual de headcount do backoffice (Nome -> Gerente/Supervisor), MUITO mais confiável
@@ -118,6 +152,14 @@ LEFT JOIN silver.dpara_imobiliaria_house ih
 -- A derivação antiga (gerente da reserva mais recente ⨝ dpara_gerente_contexto, com
 -- override DP-09) vira FALLBACK só para corretor que não está no headcount (ex.:
 -- corretor de imobiliária Parceria — a planilha só cobre o quadro próprio da Pafil).
+--
+-- O join com o headcount é restrito a `hc.eh_ativo` (10/set/2026). Antes disso a
+-- restrição era implícita, porque o DP-12 só carregava Ativos; quando ele passou a
+-- carregar o quadro inteiro, deixar o join aberto mudaria a `equipe` histórica de todo
+-- corretor desligado (passaria a vir do Supervisor da planilha em vez da derivação
+-- via reserva) e o `eh_ativo_headcount` viraria verdadeiro para quem já saiu. Abrir
+-- isso provavelmente melhora o dado, mas mexe em número de página que já está no ar,
+-- então é decisão à parte — não efeito colateral de uma mudança na Performance.
 DROP VIEW IF EXISTS gold.dim_corretor CASCADE;
 CREATE VIEW gold.dim_corretor AS
 WITH gerente_reserva AS (
@@ -168,7 +210,34 @@ LEFT JOIN silver.dpara_gerente_contexto ctx
        ON lower(btrim(ctx.gerente_responsavel) COLLATE "und-x-icu") =
           lower(coalesce(ov.gerente_responsavel, gr.gerente_responsavel) COLLATE "und-x-icu")
 LEFT JOIN silver.dpara_corretor_headcount hc
-       ON lower(btrim(hc.corretor) COLLATE "und-x-icu") = lower(btrim(c.nome) COLLATE "und-x-icu");
+       ON lower(btrim(hc.corretor) COLLATE "und-x-icu") = lower(btrim(c.nome) COLLATE "und-x-icu")
+      AND hc.eh_ativo;
+
+
+-- Headcount mensal do corretor (DP-16): 1 linha por corretor × mês, com a flag de
+-- ativo. É a fato de apoio da página Performance — o denominador das medidas de
+-- produtividade (Vendas/Mês, Pasta/Mês, Ativo/Mês...) e o insumo do farol branco
+-- ("não apto/entrada recente"). No legado isso eram duas colunas fixas da planilha
+-- ("Meses Ativos 2024"/"2025"); aqui é série, e quem escolhe a janela é a medida.
+--
+-- Grão por corretor_chave (não pelo nome cru): a planilha repete o mesmo corretor
+-- quando houve desligamento e recontratação, e nome com grafia divergente do CVDW é
+-- justamente o que a chave normalizada absorve. RELACIONAR NO POWER BI por
+-- corretor_chave com gold.dim_corretor_headcount, e NÃO criar relacionamento com
+-- dim_calendario: a ponte de tempo é feita por TREATAS sobre `ano_mes` dentro da
+-- medida [Meses Ativos] (ver powerbi/MEDIDAS_PERFORMANCE.dax), o que evita caminho
+-- ambíguo com as três fatos e funciona mesmo com filtro de dias soltos.
+DROP VIEW IF EXISTS gold.fato_headcount_mensal CASCADE;
+CREATE VIEW gold.fato_headcount_mensal AS
+SELECT silver.chave_nome(m.corretor)          AS corretor_chave,
+       min(silver.nome_proprio(m.corretor))   AS corretor,
+       m.mes,
+       to_char(m.mes, 'YYYY-MM')              AS ano_mes,
+       max(m.ativo)::int                      AS ativo,
+       max(m.ativo_planilha)::int             AS ativo_planilha,   -- auditoria: o 0/1 cru da planilha
+       max(m.ativo_contrato)::int             AS ativo_contrato    -- auditoria: derivado das datas de contrato
+FROM silver.dpara_corretor_headcount_mensal m
+GROUP BY 1, 3, 4;
 
 
 -- Fato de reservas (1 linha/reserva), enriquecida com distrato, House e metas.
@@ -1302,7 +1371,87 @@ SELECT
     a.quantidade_mensagens,
     a.quantidade_interacoes,
     a.tempo_resposta,
-    a.tempo_finalizado
+    a.tempo_finalizado,
+
+    -- --- filtros da página (13/out/2026) ---------------------------------
+    -- Colunas de filtro, no FIM da lista de propósito: CREATE OR REPLACE VIEW só
+    -- aceita coluna nova no fim, e assim dá para aplicar sem dropar a view (o
+    -- DROP + CREATE, rodado por quem não é o pafil_app, deixa a view sem leitura
+    -- para o pafil_bi).
+
+    -- Status em 3 valores, no lugar dos 5 de `situacao` (três deles são só "em
+    -- andamento"). Mesma regra dos cartões: Cancelado é situacao = 'Cancelado',
+    -- Finalizado é eh_finalizado, e o resto é Em aberto. Cancelado vem primeiro
+    -- no CASE por segurança, mas hoje nenhum cancelado tem data de fim.
+    CASE
+        WHEN a.situacao = 'Cancelado' THEN 'Cancelado'
+        WHEN a.eh_finalizado          THEN 'Finalizado'
+        ELSE 'Em aberto'
+    END AS status_atendimento,
+    -- Ordem de exibição (Em aberto, Finalizado, Cancelado). A coluna de texto
+    -- ordenaria Cancelado primeiro; no Power BI, "Classificar por coluna".
+    CASE
+        WHEN a.situacao = 'Cancelado' THEN 3
+        WHEN a.eh_finalizado          THEN 2
+        ELSE 1
+    END::smallint AS status_atendimento_ordem,
+
+    -- Faixa do tempo da abertura ao fechamento. tempo_finalizado vem em MINUTOS
+    -- (ver silver.sql), então os cortes são 60, 240, 1.440 e 10.080. Limite
+    -- inferior inclusivo: exatamente 60 min cai em "1 a 4 h". O número na frente
+    -- do rótulo faz a ordenação alfabética coincidir com a ordem das faixas, no
+    -- mesmo padrão de faixa_renda_mcmv. Quem não finalizou (em aberto e
+    -- cancelado, que têm tempo nulo) vai para a última faixa. A guarda de NULL
+    -- existe porque `NULL < 60` não é verdadeiro e o ELSE o jogaria em "7 dias
+    -- ou mais"; hoje nenhum finalizado tem tempo nulo.
+    CASE
+        WHEN NOT a.eh_finalizado          THEN '6 - Não finalizado'
+        WHEN a.tempo_finalizado IS NULL   THEN '7 - Sem tempo registrado'
+        WHEN a.tempo_finalizado <    60   THEN '1 - Menos de 1 h'
+        WHEN a.tempo_finalizado <   240   THEN '2 - 1 a 4 h'
+        WHEN a.tempo_finalizado <  1440   THEN '3 - 4 a 24 h'
+        WHEN a.tempo_finalizado < 10080   THEN '4 - 1 a 7 dias'
+        ELSE                                   '5 - 7 dias ou mais'
+    END AS faixa_tempo_finalizacao,
+
+    -- Ordem de exibição das situações, do começo ao fim do fluxo: as etapas pela
+    -- ordem do quadro do CVCRM, e Finalizado e Cancelado por último. No Power BI,
+    -- "Classificar por coluna" em `situacao`. As etapas usam o próprio id do
+    -- CVCRM porque ele já cresce na ordem do quadro (conferido em 14/out/2026:
+    -- Novo Atendimento 1, Triagem 8, Time Cobrança 9, Time Atendimento 10, Time
+    -- Crédito 11, Em Atendimento 12). Só Finalizado (4) e Cancelado (7) têm id
+    -- baixo, e por isso ordenar por id_situacao os poria no começo: aqui eles
+    -- vão para 98 e 99. Situação nova que o CVCRM criar cai antes deles, na
+    -- ordem do id. Mapeamento 1 para 1 com `situacao`, que o Power BI exige.
+    CASE
+        WHEN a.situacao = 'Finalizado' THEN 98
+        WHEN a.situacao = 'Cancelado'  THEN 99
+        ELSE coalesce(a.id_situacao, 50)
+    END::smallint AS situacao_ordem,
+
+    -- Tempo de atender e de pegar, em MINUTOS, só para atendimento FINALIZADO
+    -- (o aberto fica NULL, e AVERAGE/MEDIAN do Power BI ignoram NULL). Vêm de
+    -- silver.atendimentos_workflow_tempo (ver o comentário lá).
+    --   atender = minutos na etapa "Em Atendimento": de quando alguém assumiu
+    --             até finalizar. Finalizado que nunca passou por essa etapa
+    --             (109 de 413 em 14/out/2026, que já nascem finalizados) = 0.
+    --   pegar   = tempo_finalizado menos atender: da abertura até alguém
+    --             assumir. Pegar + atender = tempo_finalizado, sempre.
+    -- Se o atendimento finalizado não tem nenhuma linha de workflow, os dois
+    -- ficam NULL (desconhecido) e não 0, para não puxar a média para baixo.
+    CASE WHEN a.eh_finalizado AND wf.id_atendimento IS NOT NULL
+         THEN coalesce(wf.tempo_atender_min, 0)
+    END AS tempo_atender_min,
+    CASE WHEN a.eh_finalizado AND wf.id_atendimento IS NOT NULL
+              AND a.tempo_finalizado IS NOT NULL
+         THEN greatest(a.tempo_finalizado - coalesce(wf.tempo_atender_min, 0), 0)
+    END AS tempo_pegar_min
 FROM silver.atendimentos_cvcrm a
 LEFT JOIN gold.dim_empreendimento de
-       ON de.id_empreendimento = a.id_empreendimento;
+       ON de.id_empreendimento = a.id_empreendimento
+LEFT JOIN (
+    SELECT id_atendimento,
+           sum(tempo_min) FILTER (WHERE eh_em_atendimento) AS tempo_atender_min
+    FROM silver.atendimentos_workflow_tempo
+    GROUP BY id_atendimento
+) wf ON wf.id_atendimento = a.id_atendimento;

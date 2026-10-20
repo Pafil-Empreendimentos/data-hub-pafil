@@ -74,13 +74,23 @@ def _filtro_incremental(
 ) -> str | None:
     """Monta o `$filter` da janela incremental, ou None para ler tudo.
 
-    A janela é larga de propósito. O campo que a API deixa filtrar é o
-    `storageDate`, que marca a CRIAÇÃO do ticket e não se move quando ele muda
-    de situação (medido na descoberta: storage_date < open_date < close_date no
-    mesmo ticket). Uma janela curta traria só os tickets criados desde a última
-    execução, e um ticket aberto ontem e fechado hoje ficaria gravado para
-    sempre como aberto. Reler os últimos `janela_dias` resolve isso, ao custo de
-    reprocessar alguns milhares de linhas que o upsert deduplica.
+    A janela é larga de propósito. O filtro recorta por `storageDate`, que marca a
+    CRIAÇÃO do ticket e não se move quando ele muda de situação (medido na
+    descoberta: storage_date < open_date < close_date no mesmo ticket). Uma janela
+    curta traria só os tickets criados desde a última execução, e um ticket aberto
+    ontem e fechado hoje ficaria gravado para sempre como aberto. Reler os últimos
+    `janela_dias` resolve isso, ao custo de reprocessar linhas que o upsert
+    deduplica.
+
+    Correção de 10/set/2026: não é verdade que `storageDate` seja o único campo
+    filtrável, como este comentário dizia antes. Medido contra a API, `closeDate`,
+    `statusDate`, `openDate`, `status` e `team` também filtram DE VERDADE (não são
+    ignorados em silêncio): `closeDate ge 2026-09-01` devolveu 533 de 1.208, `status
+    eq 'ClosedAttendant'` devolveu 819, `team eq 'Default'` devolveu 72. Um
+    incremental por `statusDate` seria semanticamente melhor, porque essa data se
+    move quando o ticket muda. Ficou como está de propósito: a coleção inteira tem
+    ~1.200 tickets (o Blip retém ~5 semanas nesta API), então a carga completa são
+    treze páginas e o incremental deixou de ser um problema de custo.
     """
     if modo != "incremental" or not obj.campo_janela:
         return None

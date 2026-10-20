@@ -37,17 +37,52 @@
 
 // ---- Contagens ----
 
-// Snapshot: quantos estão em aberto AGORA. Não depende de janela de data,
-// porque ticket em aberto não tem data de fechamento e some de qualquer
-// contexto de tempo apoiado no relacionamento ativo.
+// Snapshot: quantos estão em aberto AGORA, ou seja, Open e Waiting. Duas
+// decisões aqui, e as duas corrigem o que a medida fazia antes:
+//
+// 1. Não é "fechado = FALSE". A flag `fechado` da silver deixa Transferred de
+//    fora, então a versão antiga contava o transferido como se estivesse na
+//    fila, e transferido é 27% da base (318 em 1.190 na apuração de set/2026,
+//    contra 25 Open + Waiting). O cartão mostrava 373 "na fila neste momento"
+//    quando a fila real tinha duas dúzias.
+// 2. REMOVEFILTERS no calendário. Ticket em aberto não tem data de fechamento,
+//    logo cai na linha em branco de dim_calendario e SOME quando qualquer mês
+//    está selecionado. Sem tirar o filtro, o cartão zerava ao escolher um mês.
+//    Foto do momento não pertence a período nenhum, e é por isso que ele é o
+//    único cartão cinza da faixa.
 Tickets Em Aberto =
-CALCULATE ( COUNTROWS ( fato_atendimentos ), fato_atendimentos[fechado] = FALSE () )
+CALCULATE (
+    COUNTROWS ( fato_atendimentos ),
+    fato_atendimentos[status_origem] IN { "Open", "Waiting" },
+    REMOVEFILTERS ( dim_calendario )
+)
 
 Tickets Fechados =
 CALCULATE ( COUNTROWS ( fato_atendimentos ), fato_atendimentos[fechado] = TRUE () )
 
 Tickets Finalizados =
 CALCULATE ( COUNTROWS ( fato_atendimentos ), fato_atendimentos[finalizado] = TRUE () )
+
+// A mesma contagem na definição do PAINEL NATIVO do Blip: tudo que saiu da fila,
+// incluindo o transferido e o encerrado por inatividade. Para o Blip, transferir
+// encerra o atendimento na fila e no atendente de origem, e abre um ticket novo do
+// outro lado. Existe para CONFERIR contra o painel, não para substituir a medida
+// acima: as duas respondem perguntas diferentes ("quantas conversas foram
+// concluídas" e "quantos atendimentos foram prestados") e as duas estão certas. A
+// diferença não é pequena, são 27% da base de set/2026, e é a segunda maior causa de
+// divergência entre as duas telas (a primeira é o período).
+//
+// Sobre incluir ClosedClientInactivity: a evidência é a própria aba "Tags" do
+// painel, que lista "Inatividade" com 22 tickets. Se o painel não contasse os
+// encerrados por inatividade, essa linha não existiria lá. É inferência a partir da
+// tela, não confirmação: só o export do painel fecha isso com certeza.
+// Ver reconciliacao/blip_painel_vs_dashboard.md.
+Tickets Finalizados (padrão Blip) =
+CALCULATE (
+    COUNTROWS ( fato_atendimentos ),
+    fato_atendimentos[status_origem]
+        IN { "ClosedAttendant", "ClosedClient", "ClosedClientInactivity", "Transferred" }
+)
 
 Tickets Abandonados =
 CALCULATE ( COUNTROWS ( fato_atendimentos ), fato_atendimentos[abandonado] = TRUE () )
@@ -59,6 +94,25 @@ Tickets Criados =
 CALCULATE (
     COUNTROWS ( fato_atendimentos ),
     USERELATIONSHIP ( dim_calendario[data], fato_atendimentos[data_criacao] )
+)
+
+// Espera na fila em MINUTOS, pela mediana, para o gráfico por hora do dia
+// (PAGINA_ATENDIMENTO.md, seção 7). Mediana e não média porque a média por hora
+// é puxada por ticket que entra no fim do expediente e espera até o dia seguinte:
+// às 17h a média da base é 306 min e a mediana é 8 min. Usa a data de CRIAÇÃO
+// (mesma regra de [Tickets Criados]) para a linha e as colunas do gráfico
+// responderem ao mesmo filtro de período.
+//
+// NO MODELO AO VIVO a tabela se chama fato_atendimentos_blip (a fato do CVCRM
+// ocupa o outro nome); trocar ao colar este arquivo lá. A coluna do eixo,
+// fato_atendimentos[hora_criacao], vem da gold (blip.sql) com fuso explícito.
+Espera Mediana Fila (min) =
+DIVIDE (
+    CALCULATE (
+        MEDIAN ( fato_atendimentos[espera_fila_seg] ),
+        USERELATIONSHIP ( dim_calendario[data], fato_atendimentos[data_criacao] )
+    ),
+    60
 )
 
 // Ticket transferido gera registro novo apontando para o anterior. Esta medida
@@ -214,11 +268,29 @@ DIVIDE ( [Tickets Abandonados], [Tickets Fechados] )
 // Os cinco cartões de tempo reaproveitam as medidas de exibição em vez de
 // reimplementar o hh:mm:ss aqui. Se um dia a formatação mudar, muda num lugar
 // só e a faixa acompanha.
+//
+// TOTAL e FINALIZADOS olham datas diferentes, de propósito. TOTAL é o que ENTROU
+// no período (data de criação, via [Tickets Criados]); FINALIZADOS é o que SAIU
+// (data de fechamento, relacionamento ativo). É a mesma leitura do gráfico de
+// Criados x Fechados, só que em número: total acima de finalizados quer dizer
+// fila crescendo. Por isso os dois não fecham por soma com EM ABERTO, e não é
+// para fechar. Se algum dia a gestão preferir "total = tudo que fechou no mês",
+// basta trocar a variável por COUNTROWS ( fato_atendimentos ), mas aí o cartão
+// vira o mesmo número de FINALIZADOS (padrão Blip) e deixa de dizer algo novo.
+//
+// FINALIZADOS usa a definição do painel do Blip (inclui o transferido), porque
+// a faixa é o primeiro lugar em que a gestão confere contra a tela nativa.
+// Essa definição também inclui o encerrado por inatividade, que é o que a silver
+// chama de abandonado. Logo ABANDONADOS é um "dos quais" de FINALIZADOS, e não
+// uma fatia à parte: sem filtro de mês, FINALIZADOS + EM ABERTO = TOTAL, e
+// somar ABANDONADOS por cima conta os mesmos tickets duas vezes. O subtítulo do
+// cartão diz isso na tela para ninguém tentar fechar a conta com os três.
 // =============================================================================
 
 KPIs Atendimento HTML =
 
-VAR _finalizados = [Tickets Finalizados]
+VAR _total       = [Tickets Criados]
+VAR _finalizados = [Tickets Finalizados (padrão Blip)]
 VAR _abandonados = [Tickets Abandonados]
 VAR _txAbandono  = [% Abandono]
 VAR _emAberto    = [Tickets Em Aberto]
@@ -227,6 +299,7 @@ VAR _primeira    = COALESCE ( [Tempo Médio 1a Resposta], "--" )
 VAR _resposta    = COALESCE ( [Tempo Médio Resposta], "--" )
 VAR _atendimento = COALESCE ( [Tempo Médio Atendimento], "--" )
 
+VAR _icoInbox = "<svg viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><polyline points='22 12 16 12 14 15 10 15 8 12 2 12'></polyline><path d='M5.45 5.11L2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z'></path></svg>"
 VAR _icoCheck = "<svg viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M22 11.08V12a10 10 0 1 1-5.93-9.14'></path><polyline points='22 4 12 14.01 9 11.01'></polyline></svg>"
 VAR _icoAband = "<svg viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M16 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2'></path><circle cx='8.5' cy='7' r='4'></circle><line x1='18' y1='8' x2='23' y2='13'></line><line x1='23' y1='8' x2='18' y2='13'></line></svg>"
 VAR _icoQueda = "<svg viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><polyline points='23 18 13.5 8.5 8.5 13.5 1 6'></polyline><polyline points='17 18 23 18 23 12'></polyline></svg>"
@@ -253,11 +326,14 @@ VAR _css =
 RETURN
     _css &
     "<div class='k'>" &
+        "<div class='c'><div class='ic'>" & _icoInbox & "</div><div class='l'>TOTAL</div><div class='v'>" &
+            FORMAT ( _total, "#,0" ) & "</div><div class='s'>atendimentos criados</div></div>" &
+
         "<div class='c'><div class='ic'>" & _icoCheck & "</div><div class='l'>FINALIZADOS</div><div class='v'>" &
             FORMAT ( _finalizados, "#,0" ) & "</div><div class='s'>atendimentos concluídos</div></div>" &
 
         "<div class='c r'><div class='ic'>" & _icoAband & "</div><div class='l'>ABANDONADOS</div><div class='v'>" &
-            FORMAT ( _abandonados, "#,0" ) & "</div><div class='s'>cliente parou de responder</div></div>" &
+            FORMAT ( _abandonados, "#,0" ) & "</div><div class='s'>dos finalizados, cliente parou de responder</div></div>" &
 
         "<div class='c r'><div class='ic'>" & _icoQueda & "</div><div class='l'>TX ABANDONO</div><div class='v'>" &
             FORMAT ( _txAbandono, "0.0%" ) & "</div><div class='s'>sobre os fechados</div></div>" &
@@ -302,7 +378,14 @@ Seleção Corte Atendimento = {
 }
 
 // =============================================================================
-// As três tabelas do painel, em HTML (visual HTML Content)
+// As três tabelas do painel, em HTML (visual HTML Content), VERSÃO ESTÁTICA
+//
+// Uma medida monta a tabela inteira com CONCATENATEX. É simples e não depende
+// de configuração no visual, mas o Power BI enxerga a tabela como um texto só:
+// clicar numa linha não filtra nada. A versão interativa, que filtra o resto da
+// página ao clicar, está na seção "Tabelas com clique" mais abaixo e usa outro
+// desenho (uma linha por registro do dataset). Esta seção fica como
+// alternativa para quem não precisar do clique.
 //
 // Mesma linguagem visual da faixa de KPIs: mesma família de fonte, mesmo azul
 // #003254 no cabeçalho, mesmos cantos arredondados. O que a tabela HTML entrega
@@ -544,3 +627,399 @@ RETURN
             & "<div class='cap'>Só tickets com motivo marcado pelo atendente.</div>"
     ) &
     "</div>"
+
+// A aba "Tags" do painel nativo, do jeito que ela é lá: uma lista só, com
+// empreendimento e motivo de encerramento misturados, ordenada por volume. As duas
+// tabelas acima (Empreendimentos e Motivos) continuam existindo porque são a leitura
+// útil para o negócio; esta existe para CONFERIR contra o painel, onde as duas coisas
+// aparecem juntas.
+//
+// Usa `fato_atendimentos[tag]`, a tag crua numa coluna só, e a contagem no padrão do
+// Blip (que inclui o transferido), porque o objetivo aqui é bater com a tela de lá.
+Tabela Tags HTML =
+VAR _base =
+    FILTER (
+        ADDCOLUMNS (
+            VALUES ( 'fato_atendimentos'[tag] ),
+            "@qtd", [Tickets Finalizados (padrão Blip)],
+            "@p1",  COALESCE ( [Tempo Médio 1a Resposta], "--" ),
+            "@esp", COALESCE ( [Tempo Médio Espera Fila], "--" ),
+            "@res", COALESCE ( [Tempo Médio Resposta], "--" ),
+            "@ate", COALESCE ( [Tempo Médio Atendimento], "--" )
+        ),
+        [@qtd] > 0 && NOT ISBLANK ( 'fato_atendimentos'[tag] )
+    )
+VAR _max = MAXX ( _base, [@qtd] )
+VAR _linhas =
+    CONCATENATEX (
+        _base,
+        "<tr><td>"
+            & SUBSTITUTE ( SUBSTITUTE ( 'fato_atendimentos'[tag], "&", "&amp;" ), "<", "&lt;" )
+            & "</td><td style='background:linear-gradient(to right,rgba(0,50,84,.14) "
+            & FORMAT ( DIVIDE ( [@qtd], _max ) * 100, "0" ) & "%,transparent "
+            & FORMAT ( DIVIDE ( [@qtd], _max ) * 100, "0" ) & "%)'>"
+            & FORMAT ( [@qtd], "#,0" ) & "</td><td>"
+            & [@p1] & "</td><td>" & [@esp] & "</td><td>"
+            & [@res] & "</td><td>" & [@ate] & "</td></tr>",
+        "",
+        [@qtd], DESC
+    )
+RETURN
+    [CSS Tabela Atendimento] &
+    "<div class='t'>" &
+    IF (
+        ISBLANK ( _linhas ),
+        "<div class='vazio'>Nenhum ticket com tag no período selecionado.</div>",
+        "<table><thead><tr>"
+            & "<th>TAG</th><th>FINALIZADOS</th><th>1ª RESPOSTA</th>"
+            & "<th>ESPERA</th><th>RESPOSTA</th><th>ATENDIMENTO</th>"
+            & "</tr></thead><tbody>" & _linhas & "</tbody></table>"
+            & "<div class='cap'>Empreendimento e motivo na mesma lista, como no painel do Blip. "
+            & "Contagem no padrão do Blip (inclui transferido).</div>"
+    ) &
+    "</div>"
+
+// =============================================================================
+// Tabelas com clique: uma linha por registro, e o clique filtra a página
+//
+// O HTML Content só consegue filtrar outros visuais quando ele mesmo tem
+// contexto de linha, ou seja, quando existe uma coluna no campo "Granularity".
+// Com isso o visual deixa de receber um texto único e passa a receber um
+// fragmento de HTML POR LINHA do dataset, que ele envolve assim (conferido no
+// código-fonte da 1.6.2, src/domain-utils.ts, resolveHtmlGroupElement; é
+// igual da 1.4.0 em diante):
+//
+//   <div id="htmlViewer">                       <- é este que rola
+//     <div id="htmlContent">
+//       <div class="htmlViewerEntry">
+//         <div> ...fragmento da linha 1... </div>   <- div extra, sem classe
+//       </div>
+//       <div class="htmlViewerEntry">
+//         <div> ...fragmento da linha 2... </div>
+//       </div>
+//     </div>
+//   </div>
+//
+// Cada .htmlViewerEntry é um ponto de dado: clique filtra o resto da página,
+// Ctrl+clique acumula, clique direito abre o menu de drillthrough. Quem não está
+// selecionado ganha a classe "unselected". Isso existe desde a versão 1.4.0 do
+// visual (ago/2023).
+//
+// Consequências desse desenho, e como cada uma foi resolvida:
+//
+// 1. Não dá para escrever <table>, porque cada linha vive no seu próprio div.
+//    A tabela é UM CSS grid em #htmlContent, e tanto o .htmlViewerEntry quanto
+//    o div sem classe que o visual põe dentro dele viram display:contents, o
+//    que faz as células de dentro se comportarem como células da grade.
+//    Largura de coluna é calculada sobre TODAS as linhas, como numa tabela de
+//    verdade, e o cabeçalho fica fixo ao rolar.
+//    Esse div sem classe foi a causa de duas versões quebradas deste CSS: ele
+//    não aparece na documentação, e sem dissolvê-lo também cada linha vira um
+//    bloco de célula única com tudo empilhado dentro. Se um dia a tabela
+//    voltar a quebrar, ligue "Show raw HTML" no visual e confira se a
+//    estrutura acima mudou.
+//
+// 2. Não há lugar para o cabeçalho, porque não existe "antes da primeira
+//    linha". Cada linha carrega o cabeçalho junto (.hdr) e o CSS só mostra o da
+//    primeira (:first-child). Mesma coisa com a legenda de rodapé (.cap), só
+//    que na última. Custa uns bytes repetidos, e não depende de ranking nenhum
+//    no DAX para acertar qual linha é a primeira.
+//
+// 3. Ordenação é do visual, não do DAX. A medida de quantidade entra no campo
+//    "Tooltips" só para ficar disponível em "Classificar por"; escolha ela,
+//    decrescente. Sem isso a tabela vem em ordem alfabética.
+//
+// 4. O CSS vai na propriedade "Stylesheet" do visual (Formatar -> Stylesheet ->
+//    fx -> [CSS Tabela Atendimento (linhas)]). Repetir <style> em cada linha
+//    também funcionaria, mas o lugar certo é esse.
+//
+// 5. Linha sem resultado precisa voltar BLANK, e não HTML vazio, para o Power
+//    BI descartar a linha do dataset. Se a linha ficasse no dataset com HTML
+//    vazio, ela poderia ser a :first-child e levar o cabeçalho junto.
+//    Pelo mesmo motivo, nas tabelas que escondem o rótulo em branco
+//    (empreendimento, motivo, tag), ponha um filtro de visual "não está em
+//    branco" na coluna de Granularity: a medida de tooltip não é blank para
+//    essa linha, e só o filtro tira ela do dataset de vez.
+//
+// 6. A mensagem de "nenhum atendimento no período" sai da propriedade "No data
+//    message" do visual, e não do DAX: sem linhas, nenhuma medida roda.
+//
+// Configuração do visual, resumida:
+//   Values       -> [Linha ... HTML]
+//   Granularity  -> a coluna da linha (ex.: dim_atendente[atendente])
+//   Tooltips     -> [Tickets Finalizados (padrão Blip)]
+//   Classificar por -> Tickets Finalizados (padrão Blip), decrescente
+//   Formatar -> Stylesheet -> fx -> [CSS Tabela Atendimento (linhas)]
+//   Formatar -> Cross-filtering -> Ativar; Transparency 0 (o CSS cuida do
+//                .unselected; opacidade num elemento display:contents não faz
+//                efeito, então a do visual não serviria de nada aqui)
+//   Formatar -> No data message -> "Nenhum atendimento no período selecionado."
+// =============================================================================
+
+// Mesmas medidas da versão estática (cores, fontes, tamanhos), reescritas para
+// grid. Sem <style>, porque vai direto na propriedade Stylesheet.
+//
+// Colunas em `auto`: cada uma mede o conteúdo mais largo que recebeu (o nome
+// mais comprido, o maior número, o "ATENDIMENTO" do cabeçalho) e a sobra do
+// visual é repartida por igual entre as seis. É o comportamento de uma <table>
+// com width 100%, e foi pedido assim, no lugar das proporções fixas da primeira
+// versão, que deixavam a coluna de nome larga demais com muito vazio.
+// Tudo centralizado, inclusive o nome (pedido da gestão). Nada de overflow
+// aqui: quem rola é o #htmlViewer do próprio visual, e o sticky do cabeçalho
+// se apoia nele.
+CSS Tabela Atendimento (linhas) =
+    "#htmlContent{display:grid;grid-template-columns:repeat(6,auto);align-content:start;font-family:'Segoe UI','Segoe UI Semibold',Arial,sans-serif;font-size:30px;color:#1F2937;}" &
+    ".htmlViewerEntry,.htmlViewerEntry>div,.hdr{display:contents;}" &
+    ".htmlViewerEntry:not(:first-child) .hdr{display:none;}" &
+    ".th{position:sticky;top:0;z-index:1;background:#003254;color:#fff;font-weight:600;font-size:26px;letter-spacing:.02em;text-align:center;padding:18px 22px;white-space:nowrap;overflow:hidden;}" &
+    ".th:first-child{border-radius:12px 0 0 0;}" &
+    ".th:last-child{border-radius:0 12px 0 0;}" &
+    ".td{padding:16px 22px;text-align:center;border-bottom:1px solid #E5E7EB;white-space:nowrap;overflow:hidden;cursor:pointer;background-color:#fff;}" &
+    ".td.nome{font-weight:600;white-space:normal;}" &
+    ".htmlViewerEntry:nth-child(even) .td{background-color:#F3F6F8;}" &
+    ".htmlViewerEntry:hover .td{background-color:#E8EEF2;}" &
+    ".htmlViewerEntry.unselected .td{opacity:.35;}" &
+    ".semid{color:#6B7280;font-style:italic;}" &
+    ".cap{display:none;grid-column:1/-1;font-size:22px;color:#6B7280;padding:12px 22px 0 22px;}" &
+    ".htmlViewerEntry:last-child .cap{display:block;}"
+
+// As cinco colunas de métrica são iguais nas cinco tabelas. Cabeçalho e células
+// de tempo ficam em medidas próprias para a diferença entre as tabelas se
+// resumir ao rótulo da primeira coluna e à regra de quem entra.
+Cabeçalho Métricas Tabela HTML =
+    "<div class='th'>FINALIZADOS</div><div class='th'>1ª RESPOSTA</div>"
+    & "<div class='th'>ESPERA</div><div class='th'>RESPOSTA</div><div class='th'>ATENDIMENTO</div>"
+
+Células Tempos Tabela HTML =
+    "<div class='td'>" & COALESCE ( [Tempo Médio 1a Resposta], "--" ) & "</div>"
+    & "<div class='td'>" & COALESCE ( [Tempo Médio Espera Fila], "--" ) & "</div>"
+    & "<div class='td'>" & COALESCE ( [Tempo Médio Resposta], "--" ) & "</div>"
+    & "<div class='td'>" & COALESCE ( [Tempo Médio Atendimento], "--" ) & "</div>"
+
+// ---- 1. Por atendente ----
+// _max vem de ALLSELECTED para a barra ser relativa ao maior atendente DENTRO
+// do recorte atual (mês, fila clicada na outra tabela), e não ao maior de
+// sempre. O próprio clique nesta tabela não entra nesse contexto, porque
+// visual nenhum filtra a si mesmo, então as barras não mudam ao selecionar.
+Linha Atendente HTML =
+VAR _nome = SELECTEDVALUE ( 'dim_atendente'[atendente] )
+VAR _qtd  = [Tickets Finalizados (padrão Blip)]
+VAR _max  = MAXX ( ALLSELECTED ( 'dim_atendente'[atendente] ), [Tickets Finalizados (padrão Blip)] )
+VAR _pct  = FORMAT ( DIVIDE ( _qtd, _max ) * 100, "0" )
+VAR _rotulo =
+    IF (
+        ISBLANK ( _nome ),
+        "<div class='td nome semid'>Sem atendente identificado</div>",
+        "<div class='td nome'>" & SUBSTITUTE ( SUBSTITUTE ( _nome, "&", "&amp;" ), "<", "&lt;" ) & "</div>"
+    )
+RETURN
+    IF (
+        _qtd > 0,
+        "<div class='hdr'><div class='th'>ATENDENTE</div>" & [Cabeçalho Métricas Tabela HTML] & "</div>"
+            & _rotulo
+            & "<div class='td' style='background-image:linear-gradient(to right,rgba(0,50,84,.14) "
+            & _pct & "%,transparent " & _pct & "%)'>" & FORMAT ( _qtd, "#,0" ) & "</div>"
+            & [Células Tempos Tabela HTML]
+            & "<div class='cap'>Tempos médios em hh:mm:ss. Acima de 24h acumula nas horas.</div>"
+    )
+
+// ---- 2. Por fila ----
+Linha Fila HTML =
+VAR _nome = SELECTEDVALUE ( 'dim_fila'[fila_exibicao] )
+VAR _qtd  = [Tickets Finalizados (padrão Blip)]
+VAR _max  = MAXX ( ALLSELECTED ( 'dim_fila'[fila_exibicao] ), [Tickets Finalizados (padrão Blip)] )
+VAR _pct  = FORMAT ( DIVIDE ( _qtd, _max ) * 100, "0" )
+VAR _rotulo =
+    IF (
+        ISBLANK ( _nome ),
+        "<div class='td nome semid'>Sem fila</div>",
+        "<div class='td nome'>" & SUBSTITUTE ( SUBSTITUTE ( _nome, "&", "&amp;" ), "<", "&lt;" ) & "</div>"
+    )
+RETURN
+    IF (
+        _qtd > 0,
+        "<div class='hdr'><div class='th'>FILA</div>" & [Cabeçalho Métricas Tabela HTML] & "</div>"
+            & _rotulo
+            & "<div class='td' style='background-image:linear-gradient(to right,rgba(0,50,84,.14) "
+            & _pct & "%,transparent " & _pct & "%)'>" & FORMAT ( _qtd, "#,0" ) & "</div>"
+            & [Células Tempos Tabela HTML]
+            & "<div class='cap'>Tempos médios em hh:mm:ss. Acima de 24h acumula nas horas.</div>"
+    )
+
+// ---- 3. Por empreendimento ----
+// O rótulo em branco (42% dos fechados) fica fora da tabela E fora do _max,
+// senão a barra de todo produto real ficaria minúscula contra o buraco. Lembre
+// do filtro de visual "não está em branco" na coluna (item 5 do cabeçalho da
+// seção).
+Linha Empreendimento HTML =
+VAR _nome = SELECTEDVALUE ( 'dim_empreendimento'[empreendimento] )
+VAR _qtd  = [Tickets Finalizados (padrão Blip)]
+VAR _max  =
+    MAXX (
+        FILTER (
+            ALLSELECTED ( 'dim_empreendimento'[empreendimento] ),
+            NOT ISBLANK ( 'dim_empreendimento'[empreendimento] )
+        ),
+        [Tickets Finalizados (padrão Blip)]
+    )
+VAR _pct  = FORMAT ( DIVIDE ( _qtd, _max ) * 100, "0" )
+RETURN
+    IF (
+        _qtd > 0 && NOT ISBLANK ( _nome ),
+        "<div class='hdr'><div class='th'>EMPREENDIMENTO</div>" & [Cabeçalho Métricas Tabela HTML] & "</div>"
+            & "<div class='td nome'>" & SUBSTITUTE ( SUBSTITUTE ( _nome, "&", "&amp;" ), "<", "&lt;" ) & "</div>"
+            & "<div class='td' style='background-image:linear-gradient(to right,rgba(0,50,84,.14) "
+            & _pct & "%,transparent " & _pct & "%)'>" & FORMAT ( _qtd, "#,0" ) & "</div>"
+            & [Células Tempos Tabela HTML]
+            & "<div class='cap'>Só tickets com tag de empreendimento. Veja o rodapé de qualidade do dado para a cobertura.</div>"
+    )
+
+// ---- 4. Por motivo de encerramento ----
+Linha Motivo HTML =
+VAR _nome = SELECTEDVALUE ( 'fato_atendimentos'[motivo_encerramento] )
+VAR _qtd  = [Tickets Finalizados (padrão Blip)]
+VAR _max  =
+    MAXX (
+        FILTER (
+            ALLSELECTED ( 'fato_atendimentos'[motivo_encerramento] ),
+            NOT ISBLANK ( 'fato_atendimentos'[motivo_encerramento] )
+        ),
+        [Tickets Finalizados (padrão Blip)]
+    )
+VAR _pct  = FORMAT ( DIVIDE ( _qtd, _max ) * 100, "0" )
+RETURN
+    IF (
+        _qtd > 0 && NOT ISBLANK ( _nome ),
+        "<div class='hdr'><div class='th'>MOTIVO DE ENCERRAMENTO</div>" & [Cabeçalho Métricas Tabela HTML] & "</div>"
+            & "<div class='td nome'>" & SUBSTITUTE ( SUBSTITUTE ( _nome, "&", "&amp;" ), "<", "&lt;" ) & "</div>"
+            & "<div class='td' style='background-image:linear-gradient(to right,rgba(0,50,84,.14) "
+            & _pct & "%,transparent " & _pct & "%)'>" & FORMAT ( _qtd, "#,0" ) & "</div>"
+            & [Células Tempos Tabela HTML]
+            & "<div class='cap'>Só tickets com motivo marcado pelo atendente.</div>"
+    )
+
+// ---- 5. Por tag (conferência contra o painel) ----
+Linha Tag HTML =
+VAR _nome = SELECTEDVALUE ( 'fato_atendimentos'[tag] )
+VAR _qtd  = [Tickets Finalizados (padrão Blip)]
+VAR _max  =
+    MAXX (
+        FILTER ( ALLSELECTED ( 'fato_atendimentos'[tag] ), NOT ISBLANK ( 'fato_atendimentos'[tag] ) ),
+        [Tickets Finalizados (padrão Blip)]
+    )
+VAR _pct  = FORMAT ( DIVIDE ( _qtd, _max ) * 100, "0" )
+RETURN
+    IF (
+        _qtd > 0 && NOT ISBLANK ( _nome ),
+        "<div class='hdr'><div class='th'>TAG</div>" & [Cabeçalho Métricas Tabela HTML] & "</div>"
+            & "<div class='td nome'>" & SUBSTITUTE ( SUBSTITUTE ( _nome, "&", "&amp;" ), "<", "&lt;" ) & "</div>"
+            & "<div class='td' style='background-image:linear-gradient(to right,rgba(0,50,84,.14) "
+            & _pct & "%,transparent " & _pct & "%)'>" & FORMAT ( _qtd, "#,0" ) & "</div>"
+            & [Células Tempos Tabela HTML]
+            & "<div class='cap'>Empreendimento e motivo na mesma lista, como no painel do Blip. "
+            & "Contagem no padrão do Blip (inclui transferido).</div>"
+    )
+
+// =============================================================================
+// Tabelona de tickets: um ticket por linha, todas as colunas, para exportar
+//
+// Mesmo desenho das tabelas com clique (uma linha por registro do dataset, o
+// visual monta a lista), só que no grão do TICKET e com dezesseis colunas.
+// Existe para o usuário levar tudo de uma vez: três pontinhos do visual ->
+// Exportar dados -> Dados resumidos sai com as colunas que estão em Granularity
+// e em Tooltips, uma linha por ticket. A coluna com o HTML desta medida vai
+// junto na exportação; é só apagar no Excel.
+//
+// LIMITE QUE IMPORTA: o HTML Content pede ao Power BI no máximo 1.000 linhas
+// (capabilities.json, dataReductionAlgorithm top sem count, que é o padrão de
+// 1.000; e o visual não pagina). Acima disso ele mostra as 1.000 primeiras na
+// ordem escolhida e não avisa. Com o filtro de mês ligado, a base fica em
+// algumas centenas e cabe; a base inteira do Blip já passa de 1.300 e NÃO cabe.
+// A legenda de rodapé diz isso na tela, e a página de dados deve ter o slicer
+// de período sincronizado com a principal.
+//
+// Configuração do visual (HTML Content, numa página própria):
+//   Values       -> [Linha Ticket HTML]
+//   Granularity  -> fato_atendimentos[sequential_id] (obrigatório, é o grão)
+//                   e, para saírem na exportação, também: parent_sequential_id,
+//                   data_criacao, data_abertura, data_fechamento, situacao,
+//                   dim_atendente[atendente], dim_fila[fila_exibicao], canal,
+//                   dim_empreendimento[empreendimento], motivo_encerramento, tag.
+//                   Nas datas, escolha a coluna e não a hierarquia.
+//   Tooltips     -> [Tempo Médio Espera Fila], [Tempo Médio 1a Resposta],
+//                   [Tempo Médio Resposta], [Tempo Médio Atendimento]
+//   Classificar por -> sequential_id, decrescente (mais novo em cima)
+//   Formatar -> Stylesheet -> fx -> [CSS Tabela Tickets (linhas)]
+//   Formatar -> Cross-filtering -> Ativar; Transparency 0
+//   Formatar -> No data message -> "Nenhum ticket no período selecionado."
+//
+// A medida só depende de sequential_id estar em Granularity: os atributos do
+// próprio fato saem por SELECTEDVALUE (o filtro do ticket restringe a tabela
+// inteira), e os das dimensões por RELATED a partir da linha do fato, que
+// funciona com ou sem a coluna da dimensão no visual. As outras colunas em
+// Granularity servem só para a exportação.
+// =============================================================================
+
+// O CSS é o das outras tabelas com uma troca só: dezesseis colunas em vez de
+// seis. Mesma fonte e mesmos tamanhos, para não destoar (a primeira versão
+// tinha fonte menor e a gestão pediu igual). Deriva da medida base por
+// SUBSTITUTE de propósito: ajuste de estilo feito lá chega aqui sem retrabalho.
+// Se um dia o "repeat(6,auto)" da base mudar, esta quebra junto, e é o
+// comportamento desejado.
+CSS Tabela Tickets (linhas) =
+    SUBSTITUTE ( [CSS Tabela Atendimento (linhas)], "repeat(6,auto)", "repeat(16,auto)" )
+
+Linha Ticket HTML =
+VAR _ticket  = SELECTEDVALUE ( 'fato_atendimentos'[sequential_id] )
+VAR _pai     = SELECTEDVALUE ( 'fato_atendimentos'[parent_sequential_id] )
+VAR _criacao = SELECTEDVALUE ( 'fato_atendimentos'[data_criacao] )
+VAR _abert   = SELECTEDVALUE ( 'fato_atendimentos'[data_abertura] )
+VAR _fech    = SELECTEDVALUE ( 'fato_atendimentos'[data_fechamento] )
+VAR _sit     = SELECTEDVALUE ( 'fato_atendimentos'[situacao] )
+VAR _canal   = SELECTEDVALUE ( 'fato_atendimentos'[canal] )
+VAR _motivo  = SELECTEDVALUE ( 'fato_atendimentos'[motivo_encerramento] )
+VAR _tag     = SELECTEDVALUE ( 'fato_atendimentos'[tag] )
+VAR _atend   = MAXX ( 'fato_atendimentos', RELATED ( 'dim_atendente'[atendente] ) )
+VAR _fila    = MAXX ( 'fato_atendimentos', RELATED ( 'dim_fila'[fila_exibicao] ) )
+VAR _emp     = MAXX ( 'fato_atendimentos', RELATED ( 'dim_empreendimento'[empreendimento] ) )
+-- Texto livre (atendente, fila, motivo, tag) passa por escape de & e <, como
+-- nas outras tabelas. Data vazia e texto vazio viram "--", que é o mesmo
+-- traço das colunas de tempo.
+VAR _esc_atend  = IF ( ISBLANK ( _atend ),  "<span class='semid'>sem atendente</span>", SUBSTITUTE ( SUBSTITUTE ( _atend,  "&", "&amp;" ), "<", "&lt;" ) )
+VAR _esc_fila   = IF ( ISBLANK ( _fila ),   "--", SUBSTITUTE ( SUBSTITUTE ( _fila,   "&", "&amp;" ), "<", "&lt;" ) )
+VAR _esc_emp    = IF ( ISBLANK ( _emp ),    "--", SUBSTITUTE ( SUBSTITUTE ( _emp,    "&", "&amp;" ), "<", "&lt;" ) )
+VAR _esc_motivo = IF ( ISBLANK ( _motivo ), "--", SUBSTITUTE ( SUBSTITUTE ( _motivo, "&", "&amp;" ), "<", "&lt;" ) )
+VAR _esc_tag    = IF ( ISBLANK ( _tag ),    "--", SUBSTITUTE ( SUBSTITUTE ( _tag,    "&", "&amp;" ), "<", "&lt;" ) )
+-- Cabeçalho próprio, e não o compartilhado: no grão do ticket não há coluna
+-- de contagem, então são as quatro de tempo e não as cinco de métrica. A ordem
+-- das quatro é a de [Células Tempos Tabela HTML].
+VAR _hdr =
+    "<div class='hdr'>"
+    & "<div class='th'>TICKET</div><div class='th'>TRANSF. DE</div>"
+    & "<div class='th'>CRIAÇÃO</div><div class='th'>ABERTURA</div><div class='th'>FECHAMENTO</div>"
+    & "<div class='th'>SITUAÇÃO</div><div class='th'>ATENDENTE</div><div class='th'>FILA</div>"
+    & "<div class='th'>CANAL</div><div class='th'>EMPREENDIMENTO</div><div class='th'>MOTIVO</div>"
+    & "<div class='th'>TAG</div>"
+    & "<div class='th'>1ª RESPOSTA</div><div class='th'>ESPERA</div>"
+    & "<div class='th'>RESPOSTA</div><div class='th'>ATENDIMENTO</div>"
+    & "</div>"
+RETURN
+    IF (
+        NOT ISBLANK ( _ticket ),
+        _hdr
+            & "<div class='td'>" & FORMAT ( _ticket, "0" ) & "</div>"
+            & "<div class='td'>" & IF ( ISBLANK ( _pai ), "--", FORMAT ( _pai, "0" ) ) & "</div>"
+            & "<div class='td'>" & IF ( ISBLANK ( _criacao ), "--", FORMAT ( _criacao, "dd/mm/yyyy" ) ) & "</div>"
+            & "<div class='td'>" & IF ( ISBLANK ( _abert ),   "--", FORMAT ( _abert,   "dd/mm/yyyy" ) ) & "</div>"
+            & "<div class='td'>" & IF ( ISBLANK ( _fech ),    "--", FORMAT ( _fech,    "dd/mm/yyyy" ) ) & "</div>"
+            & "<div class='td'>" & COALESCE ( _sit, "--" ) & "</div>"
+            & "<div class='td'>" & _esc_atend & "</div>"
+            & "<div class='td'>" & _esc_fila & "</div>"
+            & "<div class='td'>" & COALESCE ( _canal, "--" ) & "</div>"
+            & "<div class='td'>" & _esc_emp & "</div>"
+            & "<div class='td'>" & _esc_motivo & "</div>"
+            & "<div class='td'>" & _esc_tag & "</div>"
+            & [Células Tempos Tabela HTML]
+            & "<div class='cap'>Um ticket por linha. O visual mostra no máximo 1.000 linhas; "
+            & "acima disso, filtre o período. Para levar tudo: três pontinhos do visual, Exportar dados.</div>"
+    )
