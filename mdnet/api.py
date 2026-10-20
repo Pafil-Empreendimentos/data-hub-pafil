@@ -47,7 +47,7 @@ _FORMATO_FILTRO = "%Y-%m-%d %H:%M"
 # esconde (ver ingerir_mdnet_pernas.py). A correspondência com a coluna Direção do
 # CSV é inbound = Entrada, outbound = Saída e internal = Interna, as três confirmadas em
 # 05/out/2026. O valor de Interna NÃO é `local` (o padrão do FreeSWITCH): esse devolveu
-# zero linhas em todos os dias. Achado com sondar_direcao_mdnet.py.
+# zero linhas em todos os dias. Achado numa sondagem pontual dos valores do filtro de direção.
 DIRECOES = ("inbound", "outbound", "internal")
 
 
@@ -164,7 +164,7 @@ class ClienteMdnet:
         `direcao` (um de DIRECOES) liga o filtro de Direção do painel. Sem ele o
         formulário vai exatamente como o navegador manda, com DIRECTION vazio.
         """
-        # `validar=False` existe só para a sonda de valores do filtro (sondar_direcao_mdnet.py).
+        # `validar=False` existe só para a sonda de valores do filtro (sondagem pontual, já removida do repositório).
         if validar and direcao is not None and direcao not in DIRECOES:
             raise ErroMdnet(f"Direção {direcao!r} desconhecida. Use uma de {DIRECOES}.")
         base = self._cfg.url_base
@@ -290,7 +290,7 @@ class ClienteMdnet:
     def baixar_pagina(self, caminho: str) -> str:
         """GET autenticado de uma página do painel (ou arquivo local dele), como texto.
 
-        Só leitura. Serve para mapear o painel (explorar_menu_mdnet.py). Se a sessão
+        Só leitura. Serve para mapear o painel. Se a sessão
         tiver expirado, entra de novo uma vez.
         """
         if not self._logado:

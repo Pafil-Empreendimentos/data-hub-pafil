@@ -7,7 +7,7 @@
 -- em vez de `sequentialid`) e serve de documentação da fonte.
 --
 -- As colunas foram modeladas a partir da descoberta de 09/set/2026
--- (explorar_blip.py), sobre uma amostra de 200 tickets, 10 filas e 26
+-- (script de descoberta, já removido do repositório), sobre uma amostra de 200 tickets, 10 filas e 26
 -- atendentes. Como a amostra não cobre os ~52 mil tickets da base, cada tabela
 -- guarda também o JSON cru em `_dados_brutos`: se o Blip passar a devolver um
 -- campo novo, ele não se perde enquanto ninguém adiciona a coluna.
