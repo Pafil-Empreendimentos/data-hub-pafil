@@ -51,12 +51,22 @@ reconciliacao/painel_mdnet/
 
 # === Automação de reporting: sessão autenticada do Power BI, nunca versionar ===
 automacao_reporting/capture_service/storage_state.json
+# Pacote gerado só para levar a stack até a VM — artefato, não fonte.
+automacao_reporting.zip
 
 # === Claude Code ===
 .claude/
+# .mcp.json aponta pra um caminho local (extensão do VS Code) — não portável
+.mcp.json
 
 # === Editores / SO ===
 .vscode/
 .idea/
 .DS_Store
 Thumbs.db
+
+# === Apresentação mensal: saídas geradas (deck .pptx e dados do fechamento) ===
+apresentacao/*.pptx
+apresentacao/dados_fechamento.json
+apresentacao/*.xlsx
+apresentacao/dados_uberaba.json
