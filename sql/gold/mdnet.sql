@@ -14,11 +14,15 @@
 -- uma ponte, para responder o que uma coluna responde. A silver mantém os dois grãos
 -- (mdnet_ura_passagens é por passagem em menu), e a gold entrega o da ligação.
 --
+-- Sobre o telefone de quem ligou: o CDR traz o número, e isso é dado pessoal. Até 20/out/2026 o
+-- Power BI recebia só `chamador_id`, um identificador derivado (md5), que basta para contar
+-- clientes distintos e ligações repetidas. Em 21/out/2026, para conferir os números da página
+-- ligação a ligação contra o painel da MDnet, a fato passou a trazer também `telefone_origem`,
+-- só em Entrada e cru, como o painel mostra. Quem tem acesso ao modelo passa a poder ver o
+-- número: manter a coluna oculta no modelo e usá-la só no tabelão de conferência
+-- (Linha Chamada HTML), sem levá-la a uma página de público amplo.
+--
 -- O que NÃO está aqui, de propósito:
---   * Telefone de cliente. O CDR traz o número de quem ligou, e isso é dado pessoal. O Power BI
---     recebe `chamador_id`, um identificador derivado (md5), que basta para contar clientes
---     distintos e ligações repetidas sem expor o número. Não é anonimização forte (telefone tem
---     pouca entropia), é para não deixar o número à vista em visual, exportação ou tooltip.
 --   * Recurso do PABX (captura de chamada *8) e perna de transferência. Não são ligações entre
 --     pessoas e inflariam a volumetria; a silver os marca em e_chamada_real e a gold os deixa
 --     de fora. Com esse corte, Entrada fecha com o cartão do painel web (21.137 em jan a out/2026).
@@ -196,6 +200,10 @@ SELECT
     -- --- quem ligou, sem expor o telefone --------------------------------------------------
     CASE WHEN b.origem_chave IS NOT NULL
          THEN left(md5('mdnet|' || b.origem_chave), 12) END   AS chamador_id,
+    -- Telefone de quem ligou, como o CDR traz (só dígitos na maioria; "Anonymous" quando o número
+    -- é oculto). Só em Entrada, a mesma condição de chamador_id: em Saída e Interna a origem é um
+    -- ramal, que já está em `ramal`. Dado pessoal: ver o cabeçalho deste arquivo.
+    CASE WHEN b.origem_chave IS NOT NULL THEN b.origem END    AS telefone_origem,
     -- Quantas vezes essa mesma origem ligou no mês da ligação: a leitura de "quem insiste".
     cm.ligacoes::int                                          AS chamador_ligacoes_mes,
 

@@ -411,10 +411,12 @@ o contexto que chega é só o mês. Tamanho: tudo é em `em` a partir de `font-s
 **Atingimento de SLA.** Não há meta de tempo de atendimento definida. Quando houver, vira uma
 medida sobre `espera_s`, ao lado de `[% Atendidas em até 1 min]`, que é só um corte de exemplo.
 
-**Telefone do cliente.** O CDR traz o número de quem ligou e a gold não o repassa: a fato tem
-`chamador_id`, um identificador derivado, que basta para contar clientes distintos e quem insiste.
-Se a operação precisar ligar de volta para quem não foi atendido, a lista sai da silver, com
-acesso controlado, e não de um visual.
+**Telefone do cliente.** O CDR traz o número de quem ligou. Até 20/out/2026 a gold não o repassava
+(só `chamador_id`, um identificador derivado). Em 21/out/2026 entrou `telefone_origem` na fato, só
+para Entrada e cru, para conferir ligação a ligação contra o painel da MDnet no tabelão de
+chamadas. É dado pessoal: a coluna fica oculta no modelo e só o tabelão a mostra, e esse visual
+não deve ir para uma página de público amplo. Se a operação precisar ligar de volta para quem não
+foi atendido, a lista continua saindo da silver, com acesso controlado.
 
 **Histórico dos menus antigos da URA.** O painel só mostra a configuração atual. As 245
 ligações do menu antigo de agosto aparecem como "fora da URA" e só existem no CSV de 30/08 que

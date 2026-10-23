@@ -988,3 +988,248 @@ RETURN
         "</div>" &
         "<div class='ft'>Conferência: Entradas = Atendidas + Não atendidas + Ruído.</div>" &
     "</div>"
+
+// =============================================================================
+// Tabelão de chamadas (21/out/2026): uma ligação por linha, com o máximo de colunas, para conferir
+// os números da página contra o painel da MDnet. Foi criado ao vivo no modelo; este bloco é a cópia
+// versionada. Em cada medida, cole no Power BI só o que vem depois do sinal de igual.
+//
+// Como montar o visual (HTML Content):
+//   Granularity:  fato_chamadas[chamada_id]
+//   Values:       Linha Chamada HTML
+//   Stylesheet:   CSS Tabela Chamadas (linhas)
+//   Ordenar por:  Início da Chamada (ordenação), decrescente
+// Cuidado com o nome parecido: chamada_id é a LIGAÇÃO, chamador_id é o CLIENTE. Com chamador_id no
+// Granularity, o cliente com 2 ligações ou mais vira uma linha só; a medida mostra um aviso em vez
+// de descartar as ligações em silêncio (23/out/2026: 14 ligações na tabela da URA e 5 no tabelão).
+//
+// Pré-requisito do TELEFONE: a gold precisa ter a coluna `telefone_origem` (aplicar_gold.py
+// --so-mdnet) e ela precisa existir em fato_chamadas no modelo. É dado pessoal: deixar a coluna
+// oculta no modelo e usá-la só neste visual (ver sql/gold/mdnet.sql).
+//
+// Para conferir a contagem, ponha um cartão com [Linhas do Tabelão] ao lado do visual, com o mesmo
+// filtro. Se o tabelão mostrar menos linhas que o cartão, o visual está perdendo linhas (filtro do
+// próprio visual ou limite de dados). Se o cartão também mostrar menos, o filtro é de página ou de
+// interação entre visuais.
+// =============================================================================
+
+Linhas do Tabelão =
+COUNTROWS ( fato_chamadas )
+
+// Formato: dd/mm/yyyy hh:mm:ss
+Início da Chamada (ordenação) =
+SELECTEDVALUE ( fato_chamadas[data_hora_inicio] )
+
+// 39 colunas. A base (#htmlContent com largura do conteúdo) é o que mantém a coluna do protocolo
+// fixa ao rolar e impede o corte do texto: com repeat(N,auto) e container estreito as colunas
+// encolhem, e o overflow:hidden da base corta o texto.
+CSS Tabela Chamadas (linhas) =
+[CSS Tabela Atendimentos CVCRM]
+    & "#htmlContent{width:max-content;min-width:100%;grid-template-columns:repeat(39,minmax(max-content,auto));font-size:34px;}"
+    & ".th{font-size:26px;padding:18px 16px;text-align:center;white-space:normal;line-height:1.15;}"
+    & ".td{padding:14px 16px;text-align:left;}"
+    & ".td.c{text-align:center;}"
+    & ".td.n{text-align:right;font-variant-numeric:tabular-nums;}"
+    & ".td.w{white-space:normal;min-width:420px;max-width:640px;}"
+    & ".td.id{font-size:24px;color:#6B7280;}"
+    & ".th.p,.td.p{position:sticky;left:0;z-index:2;}"
+    & ".th.p{z-index:3;}"
+    & ".td.p{font-weight:600;border-right:3px solid #C5CAD3;}"
+    & ".th.gs{border-left:4px solid rgba(255,255,255,.4);}"
+    & ".td.gs{border-left:4px solid #C5CAD3;}"
+    & ".sit{font-size:28px;padding:3px 16px;}"
+    & ".sit-alerta{background:#E0A526;color:#1F2937;}"
+    & ".td.aviso{grid-column:1/-1;justify-self:start;width:max-content;max-width:2400px;position:sticky;left:0;white-space:normal;font-weight:600;color:#8A1C1C;}"
+    & ".cap{display:none;grid-column:1/-1;justify-self:start;width:max-content;max-width:2600px;position:sticky;left:0;font-size:30px;line-height:1.4;color:#6B7280;padding:18px 24px 0 24px;text-align:left;white-space:normal;}"
+    & ".htmlViewerEntry:last-child .cap{display:block;}"
+
+// Rótulos longos quebram em duas linhas (<br>) para a coluna não ficar mais larga que o dado.
+Cabeçalho Chamada HTML =
+"<div class='hdr'>"
+    & "<div class='th p'>PROTOCOLO</div><div class='th'>INÍCIO</div><div class='th'>FIM</div>"
+    & "<div class='th'>DIA</div><div class='th'>HORA</div><div class='th'>DIA<br>ÚTIL</div>"
+    & "<div class='th gs'>DIREÇÃO</div><div class='th'>SITUAÇÃO</div><div class='th'>DESFECHO</div>"
+    & "<div class='th'>TELEFONE<br>(ORIGEM)</div><div class='th'>Nº<br>DISCADO</div><div class='th'>ROTA</div>"
+    & "<div class='th gs'>RAMAL</div><div class='th'>SETOR<br>(GRUPO)</div><div class='th'>SETOR</div>"
+    & "<div class='th'>UNIDADE</div><div class='th'>RESPONSÁVEL</div><div class='th'>ATENDIDO<br>POR</div>"
+    & "<div class='th gs'>ESPERA<br>(S)</div><div class='th'>FALADO<br>(S)</div><div class='th'>DURAÇÃO<br>(S)</div>"
+    & "<div class='th'>FAIXA</div>"
+    & "<div class='th gs'>TRANSFERIDA</div><div class='th'>TIPO</div><div class='th'>PARA O<br>RAMAL</div>"
+    & "<div class='th gs'>CLIENTE</div><div class='th'>LIGAÇÕES<br>NO MÊS</div><div class='th'>RUÍDO</div>"
+    & "<div class='th'>MOTIVO<br>DO RUÍDO</div>"
+    & "<div class='th gs'>PASSOU<br>NA URA</div><div class='th'>RESULTADO<br>NA URA</div><div class='th'>OPÇÃO</div>"
+    & "<div class='th'>CÓD.</div><div class='th'>MENU<br>ATUAL</div>"
+    & "<div class='th gs'>DIREÇÃO<br>(PAINEL)</div><div class='th'>ESTADO<br>(PAINEL)</div>"
+    & "<div class='th'>DESLIGOU<br>(LADO)</div><div class='th'>MOTIVO DO<br>DESLIGAMENTO</div>"
+    & "<div class='th gs'>ID DA<br>CHAMADA</div>"
+    & "</div>"
+
+// Uma linha da fato = uma linha da tabela. Só formata: o dado e as regras vêm da gold.
+// Em âmbar: a direção ou o estado do painel da MDnet diverge da regra do modelo.
+Linha Chamada HTML =
+VAR _id        = SELECTEDVALUE ( fato_chamadas[chamada_id] )
+VAR _protocolo = SELECTEDVALUE ( fato_chamadas[protocolo] )
+VAR _ini       = SELECTEDVALUE ( fato_chamadas[data_hora_inicio] )
+VAR _fim       = SELECTEDVALUE ( fato_chamadas[hora_fim] )
+VAR _hora      = SELECTEDVALUE ( fato_chamadas[hora] )
+VAR _dia       = SELECTEDVALUE ( fato_chamadas[dia_semana_nome] )
+VAR _util      = SELECTEDVALUE ( fato_chamadas[e_dia_util] )
+VAR _direcao   = SELECTEDVALUE ( fato_chamadas[direcao] )
+VAR _atendida  = SELECTEDVALUE ( fato_chamadas[atendida] )
+VAR _desfecho  = SELECTEDVALUE ( fato_chamadas[desfecho] )
+VAR _tel       = SELECTEDVALUE ( fato_chamadas[telefone_origem] )
+VAR _discado   = SELECTEDVALUE ( fato_chamadas[numero_chamado] )
+VAR _rota      = SELECTEDVALUE ( fato_chamadas[rota_entrada] )
+VAR _ramal     = SELECTEDVALUE ( fato_chamadas[ramal] )
+VAR _atPor     = SELECTEDVALUE ( fato_chamadas[atendido_por] )
+VAR _espera    = SELECTEDVALUE ( fato_chamadas[espera_s] )
+VAR _falado    = SELECTEDVALUE ( fato_chamadas[falado_s] )
+VAR _dur       = SELECTEDVALUE ( fato_chamadas[duracao_total_s] )
+VAR _faixa     = SELECTEDVALUE ( fato_chamadas[faixa_duracao] )
+VAR _transf    = SELECTEDVALUE ( fato_chamadas[e_transferida] )
+VAR _tipoTr    = SELECTEDVALUE ( fato_chamadas[tipo_transferencia] )
+VAR _paraRamal = SELECTEDVALUE ( fato_chamadas[transferido_para_ramal] )
+VAR _chamador  = SELECTEDVALUE ( fato_chamadas[chamador_id] )
+VAR _ligMes    = SELECTEDVALUE ( fato_chamadas[chamador_ligacoes_mes] )
+VAR _ruido     = SELECTEDVALUE ( fato_chamadas[e_ruido] )
+VAR _motivo    = SELECTEDVALUE ( fato_chamadas[motivo_ruido] )
+VAR _ura       = SELECTEDVALUE ( fato_chamadas[passou_ura] )
+VAR _uraRes    = SELECTEDVALUE ( fato_chamadas[ura_resultado] )
+VAR _uraOp     = SELECTEDVALUE ( fato_chamadas[ura_opcao] )
+VAR _uraCod    = SELECTEDVALUE ( fato_chamadas[ura_codigo_opcao] )
+VAR _uraAtual  = SELECTEDVALUE ( fato_chamadas[ura_menu_atual] )
+VAR _dirP      = SELECTEDVALUE ( fato_chamadas[direcao_cartao] )
+VAR _estP      = SELECTEDVALUE ( fato_chamadas[estado_cartao] )
+VAR _lado      = SELECTEDVALUE ( fato_chamadas[lado_desligamento] )
+VAR _motDesl   = SELECTEDVALUE ( fato_chamadas[motivo_desligamento] )
+-- Setor e unidade vêm da dim_ramal pela relação ramal; a ligação sem ramal fica sem setor.
+VAR _setorG    = MAXX ( fato_chamadas, RELATED ( dim_ramal[setor_grupo] ) )
+VAR _setor     = MAXX ( fato_chamadas, RELATED ( dim_ramal[setor] ) )
+VAR _unid      = MAXX ( fato_chamadas, RELATED ( dim_ramal[unidade] ) )
+VAR _resp      = MAXX ( fato_chamadas, RELATED ( dim_ramal[responsavel] ) )
+-- Divergência com o painel da MDnet: direção diferente, ou estado diferente da nossa regra de
+-- atendida (estado Atendida OU tempo falado maior que zero). Essas células ficam em âmbar.
+VAR _divDir    = NOT ISBLANK ( _direcao ) && NOT ISBLANK ( _dirP ) && _direcao <> _dirP
+VAR _divEst    = NOT ISBLANK ( _atendida ) && NOT ISBLANK ( _estP ) && _atendida <> ( _estP = "Atendida" )
+
+VAR _tIni      = IF ( ISBLANK ( _ini ), "--", FORMAT ( _ini, "dd/mm/yyyy hh:nn:ss" ) )
+VAR _tFim      = IF ( ISBLANK ( _fim ), "--", FORMAT ( _fim, "hh:nn:ss" ) )
+VAR _tHora     = IF ( ISBLANK ( _hora ), "--", FORMAT ( _hora, "00" ) & "h" )
+VAR _tDia      = IF ( LEN ( _dia ) = 0, "--", UPPER ( _dia ) )
+VAR _tUtil     = IF ( ISBLANK ( _util ), "--", IF ( _util, "Sim", "Não" ) )
+VAR _tDir      = IF ( LEN ( _direcao ) = 0, "--", _direcao )
+VAR _tDesf     = IF ( LEN ( _desfecho ) = 0, "--", _desfecho )
+VAR _tDisc     = IF ( LEN ( _discado ) = 0, "--", _discado )
+VAR _tRota     = IF ( LEN ( _rota ) = 0, "--", _rota )
+VAR _tRamal    = IF ( LEN ( _ramal ) = 0, "--", _ramal )
+VAR _tAtPor    = IF ( LEN ( _atPor ) = 0, "--", _atPor )
+VAR _tEsp      = IF ( ISBLANK ( _espera ), "--", FORMAT ( _espera, "#,0" ) )
+VAR _tFal      = IF ( ISBLANK ( _falado ), "--", FORMAT ( _falado, "#,0" ) )
+VAR _tDur      = IF ( ISBLANK ( _dur ), "--", FORMAT ( _dur, "#,0" ) )
+VAR _tFaixa    = IF ( LEN ( _faixa ) = 0, "--", _faixa )
+VAR _tTransf   = IF ( ISBLANK ( _transf ), "--", IF ( _transf, "Sim", "Não" ) )
+VAR _tTipoTr   = IF ( LEN ( _tipoTr ) = 0, "--", _tipoTr )
+VAR _tPara     = IF ( LEN ( _paraRamal ) = 0, "--", _paraRamal )
+VAR _tCham     = IF ( LEN ( _chamador ) = 0, "--", _chamador )
+VAR _tLigMes   = IF ( ISBLANK ( _ligMes ), "--", FORMAT ( _ligMes, "#,0" ) )
+VAR _tUra      = IF ( ISBLANK ( _ura ), "--", IF ( _ura, "Sim", "Não" ) )
+VAR _tUraRes   = IF ( LEN ( _uraRes ) = 0, "--", _uraRes )
+VAR _tCod      = IF ( LEN ( _uraCod ) = 0, "--", _uraCod )
+VAR _tUraAt    = IF ( NOT COALESCE ( _ura, FALSE ) || ISBLANK ( _uraAtual ), "--", IF ( _uraAtual, "Sim", "Não" ) )
+-- Texto livre ou com sinal maior que (a opção da URA tem ">") passa pelo escape.
+VAR _tTel      = IF ( LEN ( _tel ) = 0, "--", SUBSTITUTE ( SUBSTITUTE ( SUBSTITUTE ( _tel, "&", "&amp;" ), "<", "&lt;" ), ">", "&gt;" ) )
+VAR _tOp       = IF ( LEN ( _uraOp ) = 0, "--", SUBSTITUTE ( SUBSTITUTE ( SUBSTITUTE ( _uraOp, "&", "&amp;" ), "<", "&lt;" ), ">", "&gt;" ) )
+VAR _tSetorG   = IF ( LEN ( _setorG ) = 0, "--", SUBSTITUTE ( SUBSTITUTE ( SUBSTITUTE ( _setorG, "&", "&amp;" ), "<", "&lt;" ), ">", "&gt;" ) )
+VAR _tSetor    = IF ( LEN ( _setor ) = 0, "--", SUBSTITUTE ( SUBSTITUTE ( SUBSTITUTE ( _setor, "&", "&amp;" ), "<", "&lt;" ), ">", "&gt;" ) )
+VAR _tUnid     = IF ( LEN ( _unid ) = 0, "--", SUBSTITUTE ( SUBSTITUTE ( SUBSTITUTE ( _unid, "&", "&amp;" ), "<", "&lt;" ), ">", "&gt;" ) )
+VAR _tResp     = IF ( LEN ( _resp ) = 0, "--", SUBSTITUTE ( SUBSTITUTE ( SUBSTITUTE ( _resp, "&", "&amp;" ), "<", "&lt;" ), ">", "&gt;" ) )
+VAR _tMotivo   = IF ( LEN ( _motivo ) = 0, "--", SUBSTITUTE ( SUBSTITUTE ( SUBSTITUTE ( _motivo, "&", "&amp;" ), "<", "&lt;" ), ">", "&gt;" ) )
+VAR _tLado     = IF ( LEN ( _lado ) = 0, "--", SUBSTITUTE ( SUBSTITUTE ( SUBSTITUTE ( _lado, "&", "&amp;" ), "<", "&lt;" ), ">", "&gt;" ) )
+VAR _tMotDesl  = IF ( LEN ( _motDesl ) = 0, "--", SUBSTITUTE ( SUBSTITUTE ( SUBSTITUTE ( _motDesl, "&", "&amp;" ), "<", "&lt;" ), ">", "&gt;" ) )
+VAR _tId       = SUBSTITUTE ( SUBSTITUTE ( SUBSTITUTE ( _id, "&", "&amp;" ), "<", "&lt;" ), ">", "&gt;" )
+
+VAR _pSit =
+    IF (
+        ISBLANK ( _atendida ), "--",
+        IF ( _atendida,
+            "<span class='sit sit-finalizado'>Atendida</span>",
+            "<span class='sit sit-cancelado'>Não atendida</span>" )
+    )
+VAR _pRuido =
+    IF (
+        ISBLANK ( _ruido ), "--",
+        IF ( _ruido, "<span class='sit sit-outra'>Ruído</span>", "Não" )
+    )
+VAR _pDirP =
+    IF (
+        LEN ( _dirP ) = 0, "--",
+        IF ( _divDir, "<span class='sit sit-alerta'>" & _dirP & "</span>", _dirP )
+    )
+VAR _pEstP =
+    IF (
+        LEN ( _estP ) = 0, "--",
+        "<span class='sit "
+            & IF ( _divEst, "sit-alerta", IF ( _estP = "Atendida", "sit-finalizado", "sit-cancelado" ) )
+            & "'>" & _estP & "</span>"
+    )
+RETURN
+    IF (
+        NOT ISBLANK ( _id ),
+        [Cabeçalho Chamada HTML]
+            & "<div class='td p'>" & _protocolo & "</div>"
+            & "<div class='td c'>" & _tIni & "</div>"
+            & "<div class='td c'>" & _tFim & "</div>"
+            & "<div class='td c'>" & _tDia & "</div>"
+            & "<div class='td c'>" & _tHora & "</div>"
+            & "<div class='td c'>" & _tUtil & "</div>"
+            & "<div class='td c gs'>" & _tDir & "</div>"
+            & "<div class='td c'>" & _pSit & "</div>"
+            & "<div class='td'>" & _tDesf & "</div>"
+            & "<div class='td c'>" & _tTel & "</div>"
+            & "<div class='td c'>" & _tDisc & "</div>"
+            & "<div class='td c'>" & _tRota & "</div>"
+            & "<div class='td c gs'>" & _tRamal & "</div>"
+            & "<div class='td'>" & _tSetorG & "</div>"
+            & "<div class='td'>" & _tSetor & "</div>"
+            & "<div class='td c'>" & _tUnid & "</div>"
+            & "<div class='td'>" & _tResp & "</div>"
+            & "<div class='td'>" & _tAtPor & "</div>"
+            & "<div class='td n gs'>" & _tEsp & "</div>"
+            & "<div class='td n'>" & _tFal & "</div>"
+            & "<div class='td n'>" & _tDur & "</div>"
+            & "<div class='td c'>" & _tFaixa & "</div>"
+            & "<div class='td c gs'>" & _tTransf & "</div>"
+            & "<div class='td c'>" & _tTipoTr & "</div>"
+            & "<div class='td c'>" & _tPara & "</div>"
+            & "<div class='td c gs'>" & _tCham & "</div>"
+            & "<div class='td n'>" & _tLigMes & "</div>"
+            & "<div class='td c'>" & _pRuido & "</div>"
+            & "<div class='td w'>" & _tMotivo & "</div>"
+            & "<div class='td c gs'>" & _tUra & "</div>"
+            & "<div class='td'>" & _tUraRes & "</div>"
+            & "<div class='td w'>" & _tOp & "</div>"
+            & "<div class='td c'>" & _tCod & "</div>"
+            & "<div class='td c'>" & _tUraAt & "</div>"
+            & "<div class='td c gs'>" & _pDirP & "</div>"
+            & "<div class='td c'>" & _pEstP & "</div>"
+            & "<div class='td c'>" & _tLado & "</div>"
+            & "<div class='td'>" & _tMotDesl & "</div>"
+            & "<div class='td id gs'>" & _tId & "</div>"
+            & "<div class='cap'>Uma ligação real por linha, sem as pernas de transferência e sem os recursos do PABX. "
+            & "O visual mostra no máximo 1.000 linhas; acima disso, filtre o período. "
+            & "Para levar tudo: três pontinhos do visual, Exportar dados. Tempos em segundos. "
+            & "Em âmbar, a direção ou o estado do painel da MDnet diverge da regra do modelo "
+            & "(atendida = estado Atendida ou tempo falado maior que zero). "
+            & "O telefone só existe nas entradas (nas demais a origem é um ramal). "
+            & "Ramal, setor e responsável valem de fevereiro/2026 em diante, e o setor é o da planilha de ramais de hoje. "
+            & "Os blocos, separados por um filete vertical: tempo, ligação, atendimento, tempos, transferência, "
+            & "cliente e ruído, URA e painel da MDnet.</div>",
+        -- Granularity errado (por exemplo chamador_id): a linha junta várias ligações e antes sumia em silêncio.
+        IF (
+            COUNTROWS ( fato_chamadas ) > 1,
+            [Cabeçalho Chamada HTML]
+                & "<div class='td aviso'>Esta linha junta " & FORMAT ( COUNTROWS ( fato_chamadas ), "#,0" )
+                & " ligações. No visual, o campo Granularity deve ser fato_chamadas[chamada_id] (a ligação). "
+                & "O campo chamador_id é o cliente e junta várias ligações numa linha só.</div>"
+        )
+    )
