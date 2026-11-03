@@ -5,13 +5,11 @@ WhatsApp (Blip) e da telefonia (MDnet), organiza tudo em um banco PostgreSQL e e
 modelo pronto para o Power BI. O objetivo é ter um número único e confiável para cada
 indicador, no lugar das planilhas e dos relatórios que divergiam entre si.
 
-```
-CVCRM (API CVDW) ─┐
-Blip (API)        ├──► bronze ──► silver ──► gold ──► Power BI
-MDnet (painel)    ┘   (cópia fiel) (limpo,    (fatos e
-                                    com regras) dimensões)
-Planilhas do backoffice (de-paras) ──► silver
-```
+<p align="center">
+  <img src="docs/img/data-hub-pafil.gif" alt="Arquitetura do Data Hub Pafil: CVCRM, Blip, MDnet e SharePoint, extraídos por Python e orquestrados pelo Airflow, entram no PostgreSQL em bronze, silver e gold, transformados pelo dbt, tudo em Docker, e chegam ao Power BI" width="100%">
+</p>
+
+*Arquitetura alvo do projeto. Hoje a produção roda sem Airflow e sem dbt, e os de-paras ainda vêm das planilhas por carga manual. Veja "O que roda em produção" e "Planejado" mais abaixo.*
 
 | Camada | O que guarda | Onde está o código |
 |---|---|---|
