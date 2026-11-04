@@ -662,3 +662,21 @@ SELECT
     (btrim(w.situacao) = 'Em Atendimento')  AS eh_em_atendimento,
     w._data_extracao
 FROM bronze.atendimentos_workflow_tempo w;
+
+
+-- ===========================================================================
+-- RESERVAS: espaços complementares (kit acabamento, kit fachada, armário...).
+-- O CVDW manda os itens numa única string, separados por vírgula, no campo
+-- `espacos_complementares` de reservas. Fica numa view própria, e não como coluna
+-- nova de silver.reservas, para não mexer numa view de que a gold inteira depende
+-- (CREATE OR REPLACE só acrescenta coluna no fim, e tirar depois exigiria derrubar
+-- os dependentes). Grão = 1 linha por reserva que tem algum espaço cadastrado.
+-- Conferido em 04/nov/2026: 321 de 4.903 reservas (319 Vendidas), nenhuma delas
+-- entre as vendas de set e out/2026.
+-- ===========================================================================
+CREATE OR REPLACE VIEW silver.reservas_espacos_complementares AS
+SELECT
+    r.idreserva::bigint             AS id_reserva,
+    btrim(r.espacos_complementares) AS espacos_complementares
+FROM bronze.reservas r
+WHERE nullif(btrim(r.espacos_complementares), '') IS NOT NULL;

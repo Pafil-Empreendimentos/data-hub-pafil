@@ -56,7 +56,9 @@ SELECT current_database(), inet_server_addr();
   `fato_atendimentos`, `fato_atendimentos_cvcrm`, `fato_chamadas`, `fato_headcount_mensal`) e
   dimensões (`dim_calendario`, `dim_empreendimento`, `dim_unidade`, `dim_corretor`,
   `dim_origem` e outras). A lista completa e o desenho estão em
-  [`modelo-semantico.md`](modelo-semantico.md).
+  [`modelo-semantico.md`](modelo-semantico.md). Fora do modelo do Power BI existe a view de
+  relatório `gold.vendas_atualizada` (uma reserva por linha, com planta e espaço
+  complementar), que alimenta a planilha Vendas Atualizada via Power Query no Excel.
 
 ## 4. Consultas de exemplo
 

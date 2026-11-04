@@ -1455,3 +1455,38 @@ LEFT JOIN (
     FROM silver.atendimentos_workflow_tempo
     GROUP BY id_atendimento
 ) wf ON wf.id_atendimento = a.id_atendimento;
+
+
+-- ===========================================================================
+-- VENDAS ATUALIZADA: base da planilha "Vendas Atualizada" (Excel + Power Query,
+-- pasta Backoffice Comercial/Vendas Atualizada). Grão = 1 reserva, em qualquer
+-- situação. Quem filtra Situação = 'Vendida' e a data inicial é a consulta do
+-- Power Query, e esse filtro vira WHERE no banco. Só tem as colunas que a
+-- planilha usa.
+--   planta               = silver.vendas.planta (endpoint /vendas do CVDW)
+--   espaco_complementar  = silver.reservas_espacos_complementares (itens separados
+--                          por vírgula; NULL quando a reserva não tem nenhum)
+--   corretor             = nome em Title Case pt-BR (silver.nome_proprio)
+-- ===========================================================================
+CREATE OR REPLACE VIEW gold.vendas_atualizada AS
+SELECT
+    f.id_reserva,
+    f.data_venda,
+    f.data_cad                          AS data_reserva,
+    f.empreendimento_conformado         AS empreendimento,
+    btrim(f.unidade)                    AS unidade,
+    nullif(btrim(v.planta), '')         AS planta,
+    ec.espacos_complementares           AS espaco_complementar,
+    silver.nome_proprio(f.corretor)     AS corretor,
+    f.imobiliaria,
+    f.gerente_responsavel,
+    f.regional,
+    f.situacao,
+    f.cf_tipo_venda                     AS tipo_venda,
+    f.valor_contrato,
+    f.midia
+FROM gold.fato_reservas f
+LEFT JOIN silver.vendas v
+       ON v.id_reserva = f.id_reserva
+LEFT JOIN silver.reservas_espacos_complementares ec
+       ON ec.id_reserva = f.id_reserva;
