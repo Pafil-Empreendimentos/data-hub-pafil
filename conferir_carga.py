@@ -53,7 +53,7 @@ def conferir() -> int:
     soma_dif = 0
     with db.conectar(cfg_pg) as conn:
         for obj in objetos:
-            total_api = cliente.total_registros_origem(obj.path)
+            total_api = cliente.total_registros_origem(obj.path, obj.base)
             linhas = _contar(conn, schema, obj.nome_logico)
             linhas_txt = "(sem tab)" if linhas is None else f"{linhas}"
             if isinstance(total_api, int) and isinstance(linhas, int):

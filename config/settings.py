@@ -31,14 +31,23 @@ class ConfigAPI:
     registros_por_pagina: int
     timeout: int
     buffer_incremental_horas: int
+    # De quanto em quanto tempo um objeto com `espelho: true` é lido inteiro (para remover da
+    # bronze o que a origem apagou). Menos de 24 h de propósito: assim a leitura cai todo dia,
+    # mesmo que a carga horária atrase alguns minutos.
+    espelho_horas: int = 20
 
     @property
     def base_url(self) -> str:
         return f"https://{self.subdominio}.cvcrm.com.br/api/v1/cvdw"
 
-    def url_objeto(self, path: str) -> str:
-        """Monta a URL completa de um objeto a partir do seu path."""
-        return f"{self.base_url}/{path.strip('/')}"
+    def url_objeto(self, path: str, base: str = "cvdw") -> str:
+        """Monta a URL completa de um objeto a partir do seu path.
+
+        `base` é o grupo da API logo depois de /api/v1/. Quase tudo vive em "cvdw" (o data
+        warehouse); as definições de workflow vivem em "configuracoes".
+        """
+        return (f"https://{self.subdominio}.cvcrm.com.br/api/v1/"
+                f"{base.strip('/')}/{path.strip('/')}")
 
     def headers(self) -> dict[str, str]:
         """Headers de autenticação (nomes configuráveis) + Accept JSON."""
@@ -152,6 +161,15 @@ class Objeto:
     # quando um campo isolado é editado — nesses, uma correção feita depois da
     # última movimentação nunca voltaria a ser lida (ver R26 em docs/regras-de-negocio.md).
     sempre_full: bool = False
+    # Grupo da API logo depois de /api/v1/. Quase tudo vive em "cvdw"; as definições de
+    # workflow (situações e flags de repasses, comissões...) vivem em "configuracoes".
+    base: str = "cvdw"
+    # A bronze espelha a origem: a cada CVDW_ESPELHO_HORAS (e em todo --full) o objeto é lido
+    # inteiro e o que a origem não devolve mais é apagado da bronze, mas só se a leitura fechou
+    # com o total da origem (a paginação pula registros de mesma data, R32) e depois de ficar
+    # de fora de DUAS leituras completas seguidas. Para objetos que o CVCRM regenera ou apaga
+    # (pagamentos e cronograma de comissão).
+    espelho: bool = False
 
 
 def _obrigatoria(nome: str) -> str:
@@ -175,6 +193,7 @@ def carregar_config_api() -> ConfigAPI:
         registros_por_pagina=min(registros, 500),  # API limita a 500
         timeout=int(os.getenv("CVDW_TIMEOUT", "60")),
         buffer_incremental_horas=int(os.getenv("CVDW_BUFFER_INCREMENTAL_HORAS", "24")),
+        espelho_horas=int(os.getenv("CVDW_ESPELHO_HORAS", "20")),
     )
 
 
@@ -299,6 +318,8 @@ def carregar_objetos(caminho: Path | None = None) -> list[Objeto]:
                 # ausência da chave => "auto"; valor None explícito => força hash.
                 id=item.get("id", "auto"),
                 sempre_full=bool(item.get("sempre_full", False)),
+                base=str(item.get("base", "cvdw")),
+                espelho=bool(item.get("espelho", False)),
             )
         )
     return objetos

@@ -46,7 +46,7 @@ humano.
 
 | Fonte | Como chega | Observações |
 |---|---|---|
-| **CVCRM** (CRM imobiliário, `pafil.cvcrm.com.br`) | API CVDW, 22 objetos listados em [`config/objetos.yml`](../config/objetos.yml) | 500 registros por página e limite de cerca de 20 requisições por minuto. Passar disso gera erro 429 e bloqueio de 60 segundos. Autenticação por e-mail e token. A carga incremental usa `a_partir_data_referencia` |
+| **CVCRM** (CRM imobiliário, `pafil.cvcrm.com.br`) | API CVDW, 30 objetos listados em [`config/objetos.yml`](../config/objetos.yml) (27 do CVDW e 3 definições de workflow, que moram em outro grupo da API). Os que o CVCRM apaga ou regenera têm `espelho`, e a bronze deixa de guardar o que a origem removeu (ver [`comissoes-e-repasses.md`](comissoes-e-repasses.md)) | 500 registros por página e limite de cerca de 20 requisições por minuto. Passar disso gera erro 429 e bloqueio de 60 segundos. Autenticação por e-mail e token. A carga incremental usa `a_partir_data_referencia` |
 | **Blip** (atendimento por WhatsApp) | API de comandos do Blip | A API só guarda cerca de 5 semanas de tickets, então o nosso banco é a única memória de longo prazo desse dado. Atrasar a carga é perder dado |
 | **MDnet** (telefonia: PABX, URA e ramais) | Painel web, sem API. O extrator faz login e baixa o mesmo CSV do botão de exportar | Raspagem de painel: se o layout mudar, a carga falha. Detalhes em [`sql/silver/README.md`](../sql/silver/README.md) |
 | **Planilhas do backoffice** | Leitura de arquivos `.xlsx` e `.xlsm` do SharePoint | De-paras, metas, preços, headcount. Não existem na API. Ver [`de-paras.md`](de-paras.md) |

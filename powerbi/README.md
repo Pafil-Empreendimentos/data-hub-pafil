@@ -226,6 +226,19 @@ que é novo aqui. As medidas estão em
 
 ---
 
+### As páginas "Repasses" e "Comissões" (módulos do CVCRM)
+
+Duas páginas novas, em HTML e CSS no mesmo design system das outras, sobre os fatos de comissão e repasse da
+gold (as tabelas são novas e entram pela interface do Desktop, nunca por XMLA). As medidas estão em
+[`MEDIDAS_REPASSES.dax`](MEDIDAS_REPASSES.dax) e [`MEDIDAS_COMISSOES.dax`](MEDIDAS_COMISSOES.dax), e o roteiro
+completo (relacionamentos, visuais, campos e números para conferir) está em
+[`PAGINA_REPASSES.md`](PAGINA_REPASSES.md) e [`PAGINA_COMISSOES.md`](PAGINA_COMISSOES.md). A análise por trás
+dos números e as armadilhas dos dados estão em [`docs/comissoes-e-repasses.md`](../docs/comissoes-e-repasses.md).
+Dois avisos: a comissão finalizada **não** é paga (o CVCRM não registra pagamento efetivo), e 85% dos repasses
+em andamento são esperas por desenho, que as medidas separam da fila de trabalho.
+
+---
+
 ## 6. Validação: como confiar nos números
 
 Antes de apresentar, confira os visuais contra os relatórios já reconciliados em

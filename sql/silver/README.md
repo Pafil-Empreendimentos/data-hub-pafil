@@ -16,6 +16,7 @@ seguindo os códigos `ING-*`, `DP-*`, `KPI-*` e `R*` usados naquele catálogo.
 | [`silver.sql`](silver.sql) | O schema `silver`, com funções de tipagem tolerante e 6 views de conformação |
 | [`seeds.sql`](seeds.sql) | As tabelas de-para (DP-01 a DP-12): a estrutura e a proveniência de cada uma (os dados em si são carregados à parte) |
 | [`mdnet.sql`](mdnet.sql) | A view `silver.mdnet_chamadas`, do CDR de telefonia da MDnet (PABX, URA e ramais), e a tabela de-para `silver.dpara_ramais` de que ela depende. Aplica-se sozinha com `python aplicar_silver.py --so-mdnet` |
+| [`comissoes_repasses.sql`](comissoes_repasses.sql) | As 11 views de comissão e repasse (CVDW) e a função `campo_adicional_atual`. Aplica-se sozinha com `python aplicar_silver.py --so-comissoes-repasses`. Análise em [`docs/comissoes-e-repasses.md`](../../docs/comissoes-e-repasses.md) |
 | [`mdnet_ura.sql`](mdnet_ura.sql) | As views do relatório de URA da MDnet (`mdnet_ura_passagens`, `mdnet_ura_menu`, `mdnet_ura_chamadas`). Também entra no `--so-mdnet` |
 
 Para aplicar: `python aplicar_silver.py`, rodado na raiz do projeto. É
@@ -36,6 +37,21 @@ idempotente, e valida contando as linhas de cada view.
 > refletem o dado mais atual, e não exigem nenhum passo extra de refresh.
 > Materializar como `TABLE` ou `MATERIALIZED VIEW` só faria sentido se a
 > performance algum dia exigir isso.
+
+## Comissão e repasse (`silver.comissoes_*` e `silver.repasses_*`)
+
+Onze views em [`comissoes_repasses.sql`](comissoes_repasses.sql), todas sobre a bronze dos dois módulos do CVCRM:
+
+| View | Grão | Destaques |
+|---|---|---|
+| `repasses_situacoes` | 1 etapa do workflow (50) | as 35 etapas atuais mais as 15 aposentadas; `fase` de negócio (proposta editável na própria view) e as flags `fim`, `cancelado`, `distrato` e `cessao`, que vêm da API |
+| `repasses` | 1 repasse | 1:1 com a reserva; flags de fim e `eh_encerrado`; modalidade, tipo de venda e FGTS lidos do campo adicional **mais recente** |
+| `repasses_historico`, `repasses_workflow_tempo` | 1 mudança, 1 passagem | tempo em minutos; a data de finalização é a transição para a etapa de fim |
+| `comissoes_situacoes`, `comissoes_pagamentos_situacoes` | 1 situação | ordem, flags e o grupo do funil |
+| `comissoes`, `comissoes_pagamentos`, `comissoes_workflow_tempo` | 1 comissão, pagamento ou passagem | sem nome e CEP do cliente; `eh_valor_zero` marca as cascas |
+| `comissoes_regras`, `comissoes_programacao` | 1 regra, 1 parcela prevista | códigos do CVCRM decodificados (IC, IR, CR, UA e outros) |
+
+A silver depende de a bronze espelhar a origem (R27): sem isso, os 209 pagamentos que o CVCRM apagou somariam no fluxo de caixa.
 
 ## Telefonia da MDnet (`silver.mdnet_chamadas`)
 

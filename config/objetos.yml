@@ -18,6 +18,20 @@
 #                 CVCRM depois da última movimentação nunca mais é relida.
 #                 Só vale a pena em objeto pequeno — ver R26 em
 #                 docs/regras-de-negocio.md.
+#   base        : opcional (padrão cvdw). Grupo da API logo depois de /api/v1/.
+#                 Quase tudo mora em cvdw; as definições de workflow (situações,
+#                 ordem e flags de repasses e comissões) moram em configuracoes.
+#   espelho     : opcional (padrão false). Faz a bronze espelhar a origem: a cada
+#                 CVDW_ESPELHO_HORAS (20 h) e em todo --full o objeto é lido inteiro e
+#                 o que a origem não devolve mais é apagado da bronze, mas só se a
+#                 leitura fechou com o total que a origem declara (a paginação do CVDW
+#                 repete e pula registros de mesma data de modificação, e sempre os
+#                 mesmos para o mesmo tamanho de página: se faltar, relê com outros
+#                 tamanhos), se o registro ficou fora de DUAS leituras completas
+#                 seguidas e com trava de 25% da tabela. Serve para o que o CVCRM apaga
+#                 ou regenera: cancelar uma comissão remove os pagamentos dela e editar
+#                 as regras de uma reserva refaz o cronograma. Os snapshots diários não
+#                 são tocados. Ver R27 e R32 em docs/regras-de-negocio.md.
 #
 # Se o id detectado/fixado NÃO for único na amostra (caso típico de tabelas
 # "filhas", ex.: comissões por reserva), a descoberta cai automaticamente para
@@ -30,14 +44,17 @@ objetos:
   # São só ~10 páginas (4,9 mil reservas), cerca de 35 s por execução.
   - { nome_logico: reservas,                        path: reservas,                       id: auto, sempre_full: true }
   - { nome_logico: reservas_contratos,              path: reservas/contratos,             id: auto }
-  - { nome_logico: reservas_comissoes,              path: reservas/comissoes,             id: auto }
+  - { nome_logico: reservas_comissoes,              path: reservas/comissoes,             id: auto, espelho: true }
   - { nome_logico: reservas_historico_situacoes,    path: reservas/historico/situacoes,   id: auto }
   - { nome_logico: reservas_condicoes,              path: reservas/condicoes,             id: auto }
   - { nome_logico: leads,                           path: leads,                          id: auto }
   - { nome_logico: leads_infos,                     path: leads/infos,                    id: auto }
   - { nome_logico: leads_conversoes,                path: leads/conversoes,               id: auto }
-  - { nome_logico: comissoes,                       path: comissoes,                      id: auto }
-  - { nome_logico: comissoes_pagamentos,            path: comissoes/pagamentos,           id: auto }
+  - { nome_logico: comissoes,                       path: comissoes,                      id: auto, espelho: true }
+  # Em 06/nov/2026 a origem tinha 4.410 pagamentos e a bronze 4.619: 209 linhas fantasma
+  # (R$ 582 mil), de comissões canceladas ou refeitas. Sem o espelho elas entrariam no
+  # fluxo de caixa previsto.
+  - { nome_logico: comissoes_pagamentos,            path: comissoes/pagamentos,           id: auto, espelho: true }
   - { nome_logico: precadastros,                    path: precadastros,                   id: auto }
   - { nome_logico: precadastro_historico_situacoes, path: precadastro/historico/situacoes, id: auto }
   - { nome_logico: vendas,                          path: vendas,                         id: auto }
@@ -54,3 +71,25 @@ objetos:
   # pegar e de atender (ver PAGINA_ATENDIMENTO_CVCRM.md, seção 7). id fixo porque o
   # auto não reconhece `idtempo` a partir do nome do objeto; é único e igual a `referencia`.
   - { nome_logico: atendimentos_workflow_tempo,      path: atendimentos/workflow/tempo,    id: idtempo }
+
+  # ---------------------------------------------------------------------------
+  # Comissão e Repasse (nov/2026). Inventário completo em docs/cvcrm-api-inventario.md
+  # e a análise em docs/comissoes-e-repasses.md.
+  # ---------------------------------------------------------------------------
+  # Cronograma previsto de cada regra de comissão da reserva (uma linha por parcela). O CVCRM
+  # refaz as linhas quando a regra ou a condição de pagamento muda, daí o espelho.
+  - { nome_logico: reservas_comissoes_programacao,   path: reservas/comissoes/programacao, id: idprogramacao, espelho: true }
+  # Quanto cada comissão ficou em cada situação do workflow (a situação atual só ganha linha
+  # quando a comissão sai dela). Registro imutável: carga incremental basta.
+  - { nome_logico: comissoes_workflow_tempo,         path: comissoes/workflow/tempo,       id: idtempo }
+  # Repasse: o financiamento bancário do comprador. 1 linha por repasse, 1:1 com a reserva.
+  # O `referencia_data` é sempre igual a `data_modificao`, então o incremental enxerga edição.
+  - { nome_logico: repasses,                         path: repasses,                       id: idrepasse, espelho: true }
+  - { nome_logico: repasses_historico_situacoes,     path: repasses/historico/situacoes,   id: idhistorico }
+  - { nome_logico: repasses_workflow_tempo,          path: repasses/workflow/tempo,        id: idtempo }
+  # Definições de workflow (35, 7 e 11 situações): dizem a ordem das etapas e quais encerram o
+  # repasse ou a comissão (flags fim, cancelado, distrato...), sem adivinhar pelo nome. Vêm de
+  # outro grupo da API (configuracoes), são pequenas e lidas inteiras a cada execução.
+  - { nome_logico: workflows_repasses,               path: workflows/repasses,             id: idsituacao, base: configuracoes, sempre_full: true, espelho: true }
+  - { nome_logico: workflows_comissoes,              path: workflows/comissoes,            id: idsituacao, base: configuracoes, sempre_full: true, espelho: true }
+  - { nome_logico: workflows_comissoes_pagamentos,   path: workflows/situacao_pagamento_comissao, id: idsituacao, base: configuracoes, sempre_full: true, espelho: true }

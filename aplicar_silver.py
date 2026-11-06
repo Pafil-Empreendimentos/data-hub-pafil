@@ -25,8 +25,17 @@ MDNET_SQL = RAIZ / "sql" / "silver" / "mdnet.sql"
 # Relatório de URA da MDnet: separado porque depende da tabela bronze.mdnet_ura, que só existe
 # depois de `ingerir_mdnet_ura.py --criar-tabelas`.
 MDNET_URA_SQL = RAIZ / "sql" / "silver" / "mdnet_ura.sql"
+# Comissão e repasse (CVDW): arquivo próprio, como o da MDnet, para poder ser reaplicado sozinho
+# (--so-comissoes-repasses) sem refazer o resto da silver. Só depende da bronze e de silver.sql.
+COMISSOES_REPASSES_SQL = RAIZ / "sql" / "silver" / "comissoes_repasses.sql"
 
 # Views da silver a validar (devem existir após aplicar silver.sql).
+VIEWS_COMISSOES_REPASSES = [
+    "repasses_situacoes", "repasses", "repasses_historico", "repasses_workflow_tempo",
+    "comissoes_situacoes", "comissoes_pagamentos_situacoes", "comissoes",
+    "comissoes_pagamentos", "comissoes_workflow_tempo", "comissoes_regras",
+    "comissoes_programacao",
+]
 VIEWS = [
     "reservas", "vendas", "distratos",
     "unidades", "corretores", "imobiliarias",
@@ -34,7 +43,7 @@ VIEWS = [
     "atendimentos_cvcrm", "atendimentos_workflow_tempo",
     "blip_tickets", "blip_filas", "blip_atendentes",
     "mdnet_chamadas", "mdnet_ura_passagens", "mdnet_ura_menu", "mdnet_ura_chamadas",
-]
+] + VIEWS_COMISSOES_REPASSES
 
 
 def validar(conn, views: list[str] = VIEWS) -> int:
@@ -44,10 +53,10 @@ def validar(conn, views: list[str] = VIEWS) -> int:
         for v in views:
             try:
                 cur.execute(f"SELECT count(*) FROM silver.{v}")
-                log.info("  silver.%-13s OK  (%s linhas)", v, cur.fetchone()[0])
+                log.info("  silver.%-30s OK  (%s linhas)", v, cur.fetchone()[0])
             except Exception as exc:  # noqa: BLE001 — queremos reportar todas
                 conn.rollback()
-                log.error("  silver.%-13s FALHOU: %s", v, str(exc).splitlines()[0])
+                log.error("  silver.%-30s FALHOU: %s", v, str(exc).splitlines()[0])
                 falhas += 1
     return falhas
 
@@ -58,6 +67,8 @@ def main() -> int:
     ap.add_argument("--validar", action="store_true", help="só valida (não aplica DDL)")
     ap.add_argument("--so-mdnet", action="store_true",
                     help="aplica e valida só a view da MDnet (não toca no resto da silver)")
+    ap.add_argument("--so-comissoes-repasses", action="store_true",
+                    help="aplica e valida só as views de comissão e repasse (não toca no resto da silver)")
     ap.add_argument("--verbose", action="store_true", help="log de debug")
     args = ap.parse_args()
 
@@ -65,6 +76,14 @@ def main() -> int:
     cfg = carregar_config_pg()
 
     with db.conectar(cfg) as conn:
+        if args.so_comissoes_repasses:
+            if not args.validar:
+                db.aplicar_ddl(conn, str(COMISSOES_REPASSES_SQL))
+                log.info("Views silver de comissão e repasse aplicadas (%s).",
+                         COMISSOES_REPASSES_SQL.name)
+            falhas = validar(conn, VIEWS_COMISSOES_REPASSES)
+            return 1 if falhas else 0
+
         if args.so_mdnet:
             if not args.validar:
                 db.aplicar_ddl(conn, str(MDNET_SQL))
@@ -88,6 +107,9 @@ def main() -> int:
             log.info("View silver da MDnet aplicada (%s).", MDNET_SQL.name)
             db.aplicar_ddl(conn, str(MDNET_URA_SQL))
             log.info("Views silver da URA da MDnet aplicadas (%s).", MDNET_URA_SQL.name)
+            db.aplicar_ddl(conn, str(COMISSOES_REPASSES_SQL))
+            log.info("Views silver de comissão e repasse aplicadas (%s).",
+                     COMISSOES_REPASSES_SQL.name)
 
         log.info("Validação smoke das views:")
         falhas = validar(conn)

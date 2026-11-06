@@ -21,6 +21,15 @@ de cada objeto).
 | `gold.dim_corretor_headcount` | dimensão | 1 corretor por `corretor_chave`, quadro inteiro (use `eh_ativo` para o time corrente) | `silver.dpara_corretor_headcount` (a equipe, mais `eh_ativo`, `dt_contratacao`, `dt_desligamento` e o `meses_de_casa` calculado) cruzada com `dpara_imobiliaria_house` (Share, House/Parcerias e Regional, resolvidos pelo escritório). Não tem join com `silver.corretores`, que era justamente o que gerava duplicidade e valores vazios em `dim_corretor`. Relacione sempre por `corretor_chave` (veja mais abaixo) |
 | `gold.fato_leads` | fato | 1 lead | `silver.leads` |
 | `gold.fato_precadastros` | fato | 1 pré-cadastro | `silver.precadastros` |
+| `gold.fato_repasses`, `fato_repasses_etapas`, `fato_repasses_movimentos`, `dim_repasse_etapa`, `dim_correspondente` | fatos e dimensões | repasse, passagem por etapa, mudança de situação, etapa, correspondente | `silver.repasses*`, em [`comissoes_repasses.sql`](comissoes_repasses.sql) |
+| `gold.fato_comissoes`, `fato_comissoes_pagamentos`, `fato_comissoes_programacao`, `fato_comissoes_regras`, `dim_comissao_situacao`, `dim_imobiliaria` | fatos e dimensões | comissão, pagamento, parcela prevista, regra, situação, imobiliária | `silver.comissoes*`, no mesmo arquivo |
+
+Comissão e repasse ficam em [`comissoes_repasses.sql`](comissoes_repasses.sql), que se reaplica sozinho com
+`python aplicar_gold.py --so-comissoes-repasses`. O desenho é galaxy: cada fato liga direto nas dimensões
+compartilhadas e **não** liga em outro fato, então os fatos filhos repetem as chaves de corte. Relacionamentos,
+colunas e leitura dos números em [`docs/comissoes-e-repasses.md`](../../docs/comissoes-e-repasses.md),
+[`powerbi/PAGINA_REPASSES.md`](../../powerbi/PAGINA_REPASSES.md) e
+[`powerbi/PAGINA_COMISSOES.md`](../../powerbi/PAGINA_COMISSOES.md).
 
 ## Relacionamentos (a montar no Power BI Desktop)
 

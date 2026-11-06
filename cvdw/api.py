@@ -151,39 +151,64 @@ class ClienteCVDW:
             raise ErroAPI(f"Falha de rede em {url}: {exc}") from exc
 
     # --- amostra (descoberta) ---------------------------------------------
-    def buscar_amostra(self, path: str, registros: int = 10) -> tuple[list[dict], str]:
+    def buscar_amostra(
+        self, path: str, registros: int = 10, base: str = "cvdw"
+    ) -> tuple[list[dict], str]:
         """Busca 1 página pequena de um objeto (usado na descoberta de schema)."""
-        url = self._cfg.url_objeto(path)
+        url = self._cfg.url_objeto(path, base)
         payload = self._get(url, {"pagina": 1, "registros_por_pagina": registros})
         regs, _ = extrair_registros(payload)
         return regs, url
 
-    def total_registros_origem(self, path: str) -> int | None:
+    def total_registros_origem(self, path: str, base: str = "cvdw") -> int | None:
         """Total de registros que a API reporta no envelope (1 requisição leve).
 
         Lê `total_de_registros` sem paginar — útil para conferir a completude da
         carga (origem vs. bronze). Retorna None se o envelope não traz o total.
         """
-        url = self._cfg.url_objeto(path)
+        url = self._cfg.url_objeto(path, base)
         payload = self._get(url, {"pagina": 1, "registros_por_pagina": 1})
         _, meta = extrair_registros(payload)
         return _para_int(meta.get("total_de_registros"))
 
+    def sondar(self, path: str, base: str = "cvdw") -> tuple[int | None, list[str]]:
+        """Total que a origem reporta e os nomes dos campos do primeiro registro.
+
+        Uma requisição leve (1 registro). Serve para inventariar o catálogo: quanto cada
+        endpoint tem e quais campos devolve, sem baixar o conteúdo. Endpoint sem nenhum
+        registro devolve a lista de campos vazia (não há como saber o que ele traria).
+        """
+        url = self._cfg.url_objeto(path, base)
+        payload = self._get(url, {"pagina": 1, "registros_por_pagina": 1})
+        registros, meta = extrair_registros(payload)
+        campos = list(registros[0].keys()) if registros else []
+        return _para_int(meta.get("total_de_registros")), campos
+
     # --- paginação (ingestão) ---------------------------------------------
     def paginar(
-        self, path: str, a_partir_data_referencia: str | None = None
+        self,
+        path: str,
+        a_partir_data_referencia: str | None = None,
+        base: str = "cvdw",
+        registros_por_pagina: int | None = None,
     ) -> Iterator[tuple[int, list[dict[str, Any]]]]:
         """Itera todas as páginas de um objeto, respeitando o rate limit.
 
         Para quando há `total_de_paginas` no meta e ela é atingida, ou quando
         uma página retorna menos registros que o tamanho de página.
+
+        `registros_por_pagina` troca o tamanho configurado. Serve para reler um objeto com
+        outra fronteira entre páginas: a paginação do CVDW ordena por `referencia_data` e,
+        quando muitos registros têm a mesma data (carga em lote), repete uns e pula outros
+        na fronteira de duas páginas, e quais mudam com o tamanho da página (ver R32).
         """
-        url = self._cfg.url_objeto(path)
+        url = self._cfg.url_objeto(path, base)
+        tamanho = registros_por_pagina or self._cfg.registros_por_pagina
         pagina = 1
         while True:
             params: dict[str, Any] = {
                 "pagina": pagina,
-                "registros_por_pagina": self._cfg.registros_por_pagina,
+                "registros_por_pagina": tamanho,
             }
             if a_partir_data_referencia:
                 params["a_partir_data_referencia"] = a_partir_data_referencia
@@ -196,7 +221,7 @@ class ClienteCVDW:
             if total_paginas is not None:
                 if pagina >= total_paginas:
                     break
-            elif len(registros) < self._cfg.registros_por_pagina:
+            elif len(registros) < tamanho:
                 break
             pagina += 1
 

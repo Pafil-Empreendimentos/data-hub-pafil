@@ -1,0 +1,887 @@
+// =============================================================================
+// Medidas DAX do módulo REPASSE (nov/2026), sobre gold.fato_repasses, gold.fato_repasses_etapas,
+// gold.fato_repasses_movimentos, gold.dim_repasse_etapa e gold.dim_correspondente, mais as
+// dimensões conformadas dim_calendario e dim_empreendimento, que já existem no modelo.
+// O roteiro de montagem da página (visuais, campos, filtros) está em PAGINA_REPASSES.md, e a
+// análise por trás dos números em docs/comissoes-e-repasses.md.
+//
+// O QUE É O REPASSE. É a etapa em que o financiamento bancário do comprador (Caixa, por meio de um
+// correspondente) é contratado, registrado e liberado para a construtora. Cada reserva vendida a
+// financiar tem um repasse, que percorre um workflow de 35 etapas até "Repasse Finalizado".
+//
+// Relacionamentos que estas medidas assumem (ver PAGINA_REPASSES.md, seção 0):
+//   dim_calendario[data]                  1─* fato_repasses[data_cad]                 (ATIVO)
+//   dim_calendario[data]                  1─* fato_repasses[data_finalizacao]         (INATIVO)
+//   dim_calendario[data]                  1─* fato_repasses_etapas[data_saida]        (ATIVO)
+//   dim_calendario[data]                  1─* fato_repasses_movimentos[data_movimento](ATIVO)
+//   dim_empreendimento[id_empreendimento] 1─* fato_repasses / _etapas / _movimentos   (id_empreendimento)
+//   dim_correspondente[correspondente]    1─* fato_repasses / _etapas / _movimentos   (correspondente)
+//   dim_repasse_etapa[id_situacao]        1─* fato_repasses[id_situacao]
+// Os fatos NÃO se ligam entre si (desenho galaxy): cada um repete as chaves de corte.
+//
+// TRÊS COISAS QUE MUDAM A LEITURA (conferidas na produção em 06/nov/2026):
+//  1. "EM ANDAMENTO" ENGANA. 85% dos repasses em andamento (445 de 521) estão em Aguardando APF ou
+//     Finan. Chaves: esperas longas por desenho, em que o repasse só anda quando um marco externo
+//     acontece. A fila de trabalho de verdade são os 76 "Em tratativa". Por isso os cartões
+//     separam Em tratativa de Em espera, e o "parado" só conta a fila de trabalho.
+//  2. LOTES DISTORCEM A SÉRIE. O time abre e fecha repasses em lote (427 aberturas em 26/fev/2024,
+//     326 finalizações em 10/abr/2024). O ciclo usa só repasses finalizados sem lote nas duas
+//     pontas (eh_ciclo_confiavel); a série mensal mostra tudo, e o pico de abr/2024 é de lote.
+//  3. VALOR FINANCIADO SÓ VALE DESDE 2025. Os repasses de 2023 e 2024 vieram da migração para o
+//     CVCRM e 629 dos finalizados deles têm os valores zerados. valor_contrato vem em todos.
+//
+// Convenção de cor dos cartões (a mesma das outras páginas): azul é medida do período, cinza é a
+// foto de hoje (ignora o filtro de período) e vermelho é o que dói.
+// =============================================================================
+
+
+// ---- Constantes que o time pode ajustar ----
+
+// Quantos dias na mesma etapa para um repasse "em tratativa" contar como parado. 30 é o corte da
+// segunda faixa de aging (fato_repasses[faixa_dias_na_etapa]).
+Dias Para Considerar Parado =
+30
+
+
+// ---- Contagens do período (data de abertura, relacionamento ativo) ----
+
+Repasses =
+COUNTROWS ( fato_repasses )
+
+Repasses Finalizados =
+CALCULATE ( COUNTROWS ( fato_repasses ), fato_repasses[eh_finalizado] = TRUE () )
+
+// Cancelado, distrato e cessão de direitos: o repasse acabou sem dar dinheiro.
+Repasses Encerrados Sem Repasse =
+CALCULATE ( COUNTROWS ( fato_repasses ), fato_repasses[eh_encerrado_sem_repasse] = TRUE () )
+
+// Dos repasses que chegaram a um fim, quantos viraram repasse de fato. Ignora o que ainda está em
+// andamento, senão o número cairia a cada venda nova.
+Conversão de Repasse =
+DIVIDE (
+    [Repasses Finalizados],
+    [Repasses Finalizados] + [Repasses Encerrados Sem Repasse]
+)
+
+// Só tem valor para quem tem valor financiado informado (desde 2025, ver o aviso 3 acima).
+Financiado Finalizado =
+CALCULATE (
+    SUM ( fato_repasses[valor_financiado] ),
+    fato_repasses[eh_finalizado] = TRUE (),
+    fato_repasses[tem_valor_financiado] = TRUE ()
+)
+
+VGV Finalizado =
+CALCULATE ( SUM ( fato_repasses[valor_contrato] ), fato_repasses[eh_finalizado] = TRUE () )
+
+// Finalizou (o dinheiro entrou) e depois virou distrato ou cancelamento.
+Distrato Pós-Repasse =
+CALCULATE ( COUNTROWS ( fato_repasses ), fato_repasses[eh_distrato_pos_repasse] = TRUE () )
+
+// Finalizados que passaram ao menos uma vez por uma etapa de pendência (Pendência, Atualização
+// Documental, Conferência | Reavaliar, Divergência, Jurídico...). Em 06/nov/2026: 902 de 1.635.
+Finalizados Com Retrabalho =
+CALCULATE (
+    COUNTROWS ( fato_repasses ),
+    fato_repasses[eh_finalizado] = TRUE (),
+    fato_repasses[qtd_passagens_pendencia] >= 1
+)
+
+% Retrabalho =
+DIVIDE ( [Finalizados Com Retrabalho], [Repasses Finalizados] )
+
+
+// ---- Ciclo (só repasses finalizados sem lote nas duas pontas) ----
+// Dias corridos da abertura à finalização. A mediana é o "tempo típico": a média é puxada pelos
+// que ficaram anos parados antes de finalizar. Coortes de abertura em 06/nov/2026: 2025 mediana
+// de 97 dias (p90 de 213), 2026 de 76 dias (p90 de 141, ainda incompleto porque só entram os que
+// já finalizaram).
+
+Ciclo Mediano (dias) =
+CALCULATE ( MEDIAN ( fato_repasses[dias_ciclo] ), fato_repasses[eh_ciclo_confiavel] = TRUE () )
+
+Ciclo P90 (dias) =
+CALCULATE ( PERCENTILE.INC ( fato_repasses[dias_ciclo], 0.9 ), fato_repasses[eh_ciclo_confiavel] = TRUE () )
+
+Repasses Com Ciclo Confiável =
+CALCULATE ( COUNTROWS ( fato_repasses ), fato_repasses[eh_ciclo_confiavel] = TRUE () )
+
+
+// ---- Foto de hoje (ignoram o filtro de período: REMOVEFILTERS no calendário) ----
+// Repasse em andamento não tem data de fim, então filtrar por período zeraria o cartão. Seguem
+// valendo os filtros de empreendimento, correspondente e fase.
+
+Repasses Em Andamento =
+CALCULATE ( COUNTROWS ( fato_repasses ), fato_repasses[eh_em_andamento] = TRUE (), REMOVEFILTERS ( dim_calendario ) )
+
+VGV Em Andamento =
+CALCULATE ( SUM ( fato_repasses[valor_contrato] ), fato_repasses[eh_em_andamento] = TRUE (), REMOVEFILTERS ( dim_calendario ) )
+
+// A fila de trabalho: em andamento e fora das esperas por marco (APF e chaves).
+Repasses Em Tratativa =
+CALCULATE ( COUNTROWS ( fato_repasses ), fato_repasses[condicao_andamento] = "Em tratativa", REMOVEFILTERS ( dim_calendario ) )
+
+VGV Em Tratativa =
+CALCULATE ( SUM ( fato_repasses[valor_contrato] ), fato_repasses[condicao_andamento] = "Em tratativa", REMOVEFILTERS ( dim_calendario ) )
+
+Repasses Em Espera =
+CALCULATE ( COUNTROWS ( fato_repasses ), fato_repasses[condicao_andamento] = "Em espera por marco", REMOVEFILTERS ( dim_calendario ) )
+
+VGV Em Espera =
+CALCULATE ( SUM ( fato_repasses[valor_contrato] ), fato_repasses[condicao_andamento] = "Em espera por marco", REMOVEFILTERS ( dim_calendario ) )
+
+Repasses Parados Em Tratativa =
+CALCULATE (
+    COUNTROWS ( fato_repasses ),
+    fato_repasses[condicao_andamento] = "Em tratativa",
+    fato_repasses[dias_na_etapa] > [Dias Para Considerar Parado],
+    REMOVEFILTERS ( dim_calendario )
+)
+
+// Média de dias na etapa atual de quem está em andamento. Nas esperas por marco passa de 600
+// dias de propósito (são esperas), por isso o funil mostra a fase separada.
+Dias Médios Na Etapa =
+CALCULATE ( AVERAGE ( fato_repasses[dias_na_etapa] ), fato_repasses[eh_em_andamento] = TRUE (), REMOVEFILTERS ( dim_calendario ) )
+
+
+// ---- Vendas a financiar sem repasse aberto (bloco opcional) ----
+// Cruza fato_reservas com fato_repasses por id_reserva SEM relacionamento entre os fatos. Em
+// 06/nov/2026: 71 vendidas sem repasse, 26 delas de financiamento (Financiamento na Planta ou
+// Chaves, 24 + 2), as outras são venda direta ou à vista, que não passam por banco. É a lista de
+// quem o backoffice precisa abrir. Se o modelo não tiver fato_reservas[cf_tipo_venda], tire a
+// linha do tipo e a medida passa a contar toda venda sem repasse.
+Vendas A Financiar Sem Repasse =
+VAR _comRepasse =
+    CALCULATETABLE ( VALUES ( fato_repasses[id_reserva] ), REMOVEFILTERS () )
+RETURN
+    CALCULATE (
+        COUNTROWS ( fato_reservas ),
+        fato_reservas[eh_venda] = TRUE (),
+        fato_reservas[cf_tipo_venda] IN { "Financiamento na Planta", "Financiamento Chaves" },
+        NOT ( fato_reservas[id_reserva] IN _comRepasse ),
+        REMOVEFILTERS ( dim_calendario )
+    )
+
+
+// ---- Tempo por etapa (fato_repasses_etapas) ----
+// Minutos que cada passagem ficou na etapa, convertidos em dias na gold (tempo_dias). Mediana e
+// p90 por etapa mostram onde o processo demora.
+
+Mediana Dias Na Etapa =
+MEDIAN ( fato_repasses_etapas[tempo_dias] )
+
+P90 Dias Na Etapa =
+PERCENTILE.INC ( fato_repasses_etapas[tempo_dias], 0.9 )
+
+Passagens Por Etapa =
+COUNTROWS ( fato_repasses_etapas )
+
+
+// ---- Movimentações (fato_repasses_movimentos) ----
+
+Movimentações =
+COUNTROWS ( fato_repasses_movimentos )
+
+% Movimentos Do Correspondente =
+DIVIDE (
+    CALCULATE ( COUNTROWS ( fato_repasses_movimentos ), fato_repasses_movimentos[eh_correspondente] = TRUE () ),
+    COUNTROWS ( fato_repasses_movimentos )
+)
+
+
+// =============================================================================
+// HTML/CSS: mesma linguagem visual das páginas de Telefonia e Atendimento (CVCRM): fonte Segoe UI,
+// azul #003254, cantos de 12 a 20 px, cartão cinza para foto de hoje, cartão vermelho para o que
+// dói. O visual é o HTML Content (AppSource). Ele NÃO executa JavaScript: movimento e interação
+// vêm de CSS puro (barras que crescem, destaque ao passar o mouse) e do clique que filtra a página
+// nas tabelas com Granularity. Todo o tamanho está pensado para o canvas de 4500 x 3800.
+// =============================================================================
+
+
+// ---- 1. Faixa de KPIs ----
+// Visual: HTML Content. Campo Values: [KPIs Repasses HTML]. Nove cartões. Rótulo de até 15
+// caracteres e subtítulo de até 23, numa linha só (nowrap com reticências), como na faixa da
+// Telefonia: rótulo longo quebraria e desalinharia o valor dos vizinhos.
+KPIs Repasses HTML =
+
+VAR _total     = COALESCE ( [Repasses], 0 )
+VAR _final     = COALESCE ( [Repasses Finalizados], 0 )
+VAR _fin       = COALESCE ( [Financiado Finalizado], 0 )
+VAR _conv      = [Conversão de Repasse]
+VAR _ciclo     = [Ciclo Mediano (dias)]
+VAR _trat      = COALESCE ( [Repasses Em Tratativa], 0 )
+VAR _vgvTrat   = COALESCE ( [VGV Em Tratativa], 0 )
+VAR _espera    = COALESCE ( [Repasses Em Espera], 0 )
+VAR _parados   = COALESCE ( [Repasses Parados Em Tratativa], 0 )
+VAR _dias      = [Dias Para Considerar Parado]
+VAR _retr      = [% Retrabalho]
+VAR _pos       = COALESCE ( [Distrato Pós-Repasse], 0 )
+
+// FORMAT() de número em branco devolve "" e não BLANK(): o ISBLANK vem antes do FORMAT.
+VAR _txtConv   = IF ( ISBLANK ( _conv ), "--", FORMAT ( _conv, "0.0%" ) )
+VAR _txtCiclo  = IF ( ISBLANK ( _ciclo ), "--", FORMAT ( _ciclo, "#,0" ) & " d" )
+VAR _txtRetr   = IF ( ISBLANK ( _retr ), "--", FORMAT ( _retr, "0%" ) )
+VAR _txtFin    = "R$ " & IF ( _fin >= 1000000, FORMAT ( _fin / 1000000, "#,0.0" ) & " mi", FORMAT ( _fin / 1000, "#,0" ) & " mil" ) & " financ."
+VAR _txtVgv    = "R$ " & IF ( _vgvTrat >= 1000000, FORMAT ( _vgvTrat / 1000000, "#,0.0" ) & " mi", FORMAT ( _vgvTrat / 1000, "#,0" ) & " mil" ) & " em VGV"
+
+VAR _icoLista  = "<svg viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><line x1='8' y1='6' x2='21' y2='6'></line><line x1='8' y1='12' x2='21' y2='12'></line><line x1='8' y1='18' x2='21' y2='18'></line><line x1='3' y1='6' x2='3.01' y2='6'></line><line x1='3' y1='12' x2='3.01' y2='12'></line><line x1='3' y1='18' x2='3.01' y2='18'></line></svg>"
+VAR _icoCheck  = "<svg viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M22 11.08V12a10 10 0 1 1-5.93-9.14'></path><polyline points='22 4 12 14.01 9 11.01'></polyline></svg>"
+VAR _icoTx     = "<svg viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><polyline points='23 6 13.5 15.5 8.5 10.5 1 18'></polyline><polyline points='17 6 23 6 23 12'></polyline></svg>"
+VAR _icoRelogio = "<svg viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><circle cx='12' cy='12' r='10'></circle><polyline points='12 6 12 12 16 14'></polyline></svg>"
+VAR _icoPausa  = "<svg viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><circle cx='12' cy='12' r='10'></circle><line x1='10' y1='15' x2='10' y2='9'></line><line x1='14' y1='15' x2='14' y2='9'></line></svg>"
+VAR _icoAlerta = "<svg viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z'></path><line x1='12' y1='9' x2='12' y2='13'></line><line x1='12' y1='17' x2='12.01' y2='17'></line></svg>"
+VAR _icoRepete = "<svg viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><polyline points='23 4 23 10 17 10'></polyline><polyline points='1 20 1 14 7 14'></polyline><path d='M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15'></path></svg>"
+VAR _icoVolta  = "<svg viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><polyline points='1 4 1 10 7 10'></polyline><path d='M3.51 15a9 9 0 1 0 2.13-9.36L1 10'></path></svg>"
+
+VAR _css =
+    "<style>" &
+    "html,body{margin:0;padding:0;height:100%;}" &
+    ".k{font-family:'Segoe UI Semibold','Segoe UI',Arial,sans-serif;font-weight:600;display:flex;flex-direction:row;gap:18px;width:100%;height:100%;box-sizing:border-box;}" &
+    ".k .c{position:relative;overflow:hidden;flex:1 1 0;min-width:0;background:#003254;color:#fff;border-radius:20px;padding:24px 28px;box-sizing:border-box;}" &
+    ".k .c.g{background:#6B7280;}" &
+    ".k .c.r{background:#8A1C1C;}" &
+    ".k .ic{position:absolute;top:18px;right:22px;width:50px;height:50px;background:rgba(255,255,255,.15);border-radius:14px;display:flex;align-items:center;justify-content:center;}" &
+    ".k .ic svg{width:28px;height:28px;color:#fff;opacity:.95;}" &
+    ".k .l{font-size:26px;letter-spacing:.02em;opacity:.9;padding-right:64px;box-sizing:border-box;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}" &
+    ".k .v{font-size:56px;margin-top:10px;line-height:1;white-space:nowrap;}" &
+    ".k .s{font-size:24px;opacity:.85;margin-top:8px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}" &
+    "</style>"
+
+RETURN
+    _css &
+    "<div class='k'>" &
+        "<div class='c'><div class='ic'>" & _icoLista & "</div><div class='l'>REPASSES</div><div class='v'>" &
+            FORMAT ( _total, "#,0" ) & "</div><div class='s'>abertos no período</div></div>" &
+
+        "<div class='c' title='Repasses que chegaram a Repasse Finalizado. O financiado só existe desde 2025.'><div class='ic'>" & _icoCheck & "</div><div class='l'>FINALIZADOS</div><div class='v'>" &
+            FORMAT ( _final, "#,0" ) & "</div><div class='s'>" & _txtFin & "</div></div>" &
+
+        "<div class='c' title='Finalizados dividido pelos repasses que chegaram a um fim (finalizado, cancelado, distrato ou cessão). Ignora o que está em andamento.'><div class='ic'>" & _icoTx & "</div><div class='l'>CONVERSÃO</div><div class='v'>" &
+            _txtConv & "</div><div class='s'>finalizados/encerrados</div></div>" &
+
+        "<div class='c' title='Mediana dos dias entre a abertura e a finalização, só de finalizados sem abertura nem fechamento em lote.'><div class='ic'>" & _icoRelogio & "</div><div class='l'>CICLO MEDIANO</div><div class='v'>" &
+            _txtCiclo & "</div><div class='s'>da abertura ao fim</div></div>" &
+
+        "<div class='c g' title='Foto de hoje. A fila de trabalho: em andamento e fora das esperas por marco.'><div class='ic'>" & _icoLista & "</div><div class='l'>EM TRATATIVA</div><div class='v'>" &
+            FORMAT ( _trat, "#,0" ) & "</div><div class='s'>" & _txtVgv & "</div></div>" &
+
+        "<div class='c g' title='Foto de hoje. Aguardando APF e Finan. Chaves: esperas longas por desenho, o repasse só anda quando um marco externo acontece.'><div class='ic'>" & _icoPausa & "</div><div class='l'>EM ESPERA</div><div class='v'>" &
+            FORMAT ( _espera, "#,0" ) & "</div><div class='s'>APF e Finan. Chaves</div></div>" &
+
+        "<div class='c r' title='Foto de hoje. Repasses em tratativa na mesma etapa há mais dias do que o limite.'><div class='ic'>" & _icoAlerta & "</div><div class='l'>PARADOS</div><div class='v'>" &
+            FORMAT ( _parados, "#,0" ) & "</div><div class='s'>há mais de " & FORMAT ( _dias, "0" ) & " d na etapa</div></div>" &
+
+        "<div class='c r' title='Dos repasses finalizados, quantos passaram ao menos uma vez por uma etapa de pendência ou conferência.'><div class='ic'>" & _icoRepete & "</div><div class='l'>RETRABALHO</div><div class='v'>" &
+            _txtRetr & "</div><div class='s'>dos finalizados</div></div>" &
+
+        "<div class='c r' title='Repasses que finalizaram (o dinheiro entrou) e depois viraram distrato ou cancelamento.'><div class='ic'>" & _icoVolta & "</div><div class='l'>PÓS-REPASSE</div><div class='v'>" &
+            FORMAT ( _pos, "#,0" ) & "</div><div class='s'>finalizado e desfeito</div></div>" &
+    "</div>"
+
+
+// ---- 2. Fila por fase (funil de hoje) ----
+// Visual: HTML Content. Campo Values: [Funil Repasses HTML]. As cinco fases da fila de trabalho
+// em barras (o tamanho da barra é relativo à maior fase) e, separada embaixo, a espera por marco,
+// que é 85% do andamento e esmagaria as barras. Foto de hoje: ignora o filtro de período.
+Funil Repasses HTML =
+
+VAR _fila =
+    FILTER (
+        SUMMARIZE ( dim_repasse_etapa, dim_repasse_etapa[fase_ordem], dim_repasse_etapa[fase] ),
+        dim_repasse_etapa[fase_ordem] IN { 1, 2, 3, 4, 6 }
+    )
+VAR _max = MAXX ( _fila, [Repasses Em Andamento] )
+
+VAR _linhas =
+    CONCATENATEX (
+        _fila,
+        VAR _n     = COALESCE ( [Repasses Em Andamento], 0 )
+        VAR _v     = COALESCE ( [VGV Em Andamento], 0 )
+        VAR _d     = [Dias Médios Na Etapa]
+        VAR _w     = FORMAT ( DIVIDE ( _n, _max ) * 100, "0" )
+        VAR _tV    = "R$ " & IF ( _v >= 1000000, FORMAT ( _v / 1000000, "#,0.0" ) & " mi", FORMAT ( _v / 1000, "#,0" ) & " mil" )
+        VAR _tD    = IF ( ISBLANK ( _d ), "--", FORMAT ( _d, "#,0" ) & " d" )
+        VAR _rotulo = MID ( dim_repasse_etapa[fase], 4, 60 )
+        VAR _cor   = IF ( dim_repasse_etapa[fase_ordem] = 6, "a", "" )
+        RETURN
+            "<div class='r" & IF ( _n = 0, " z", "" ) & "'>"
+                & "<div class='lb'>" & _rotulo & "</div>"
+                & "<div class='ba'><i class='" & _cor & "' style='width:" & _w & "%'></i></div>"
+                & "<div class='nu'>" & FORMAT ( _n, "#,0" ) & "</div>"
+                & "<div class='nu'>" & _tV & "</div>"
+                & "<div class='nu'>" & _tD & "</div></div>",
+        "",
+        dim_repasse_etapa[fase_ordem], ASC
+    )
+
+VAR _nEsp   = COALESCE ( [Repasses Em Espera], 0 )
+VAR _vEsp   = COALESCE ( [VGV Em Espera], 0 )
+VAR _dEsp   = CALCULATE ( [Dias Médios Na Etapa], fato_repasses[condicao_andamento] = "Em espera por marco" )
+VAR _tVEsp  = "R$ " & IF ( _vEsp >= 1000000, FORMAT ( _vEsp / 1000000, "#,0.0" ) & " mi", FORMAT ( _vEsp / 1000, "#,0" ) & " mil" )
+VAR _tDEsp  = IF ( ISBLANK ( _dEsp ), "--", FORMAT ( _dEsp, "#,0" ) & " d" )
+
+VAR _css =
+    "<style>" &
+    "html,body{margin:0;padding:0;height:100%;background:#fff;}" &
+    ".f{font-family:'Segoe UI Semibold','Segoe UI',Arial,sans-serif;font-weight:600;color:#1F2937;box-sizing:border-box;padding:24px 30px;height:100%;overflow:hidden;}" &
+    ".f *{box-sizing:border-box;}" &
+    ".f .ti{font-size:40px;color:#003254;line-height:1.1;}" &
+    ".f .su{font-size:26px;color:#6B7280;margin:4px 0 18px;}" &
+    ".f .hd,.f .r{display:grid;grid-template-columns:minmax(560px,2fr) 3fr 130px 210px 230px;align-items:center;gap:16px;}" &
+    ".f .hd{font-size:22px;letter-spacing:.04em;color:#6B7280;padding:0 0 8px;border-bottom:2px solid #E5E7EB;}" &
+    ".f .hd span:nth-child(n+3){text-align:right;}" &
+    ".f .r{font-size:32px;padding:12px 0;border-bottom:1px solid #E5E7EB;}" &
+    ".f .r.z{opacity:.4;}" &
+    ".f .lb{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}" &
+    ".f .ba{height:30px;border-radius:15px;background:#E5E7EB;overflow:hidden;}" &
+    ".f .ba i{display:block;height:100%;border-radius:15px;background:#003254;animation:g .8s ease-out both;}" &
+    ".f .ba i.a{background:#8A1C1C;}" &
+    ".f .nu{text-align:right;white-space:nowrap;}" &
+    ".f .esp{margin-top:20px;border-radius:16px;background:#F3F4F6;padding:16px 22px;}" &
+    ".f .esp .r{border:0;padding:6px 0;}" &
+    ".f .esp .ba i{background:#6B7280;}" &
+    ".f .ft{margin-top:14px;font-size:24px;color:#6B7280;line-height:1.35;font-weight:400;}" &
+    "@keyframes g{from{width:0}}" &
+    "</style>"
+
+RETURN
+    _css &
+    "<div class='f'>" &
+        "<div class='ti'>Fila de repasses por fase</div>" &
+        "<div class='su'>foto de hoje: só o que está em andamento</div>" &
+        "<div class='hd'><span>FASE</span><span></span><span>REPASSES</span><span>VGV</span><span>NA ETAPA (MÉDIA)</span></div>" &
+        _linhas &
+        "<div class='esp'><div class='r'>" &
+            "<div class='lb'>Aguardando (APF e chaves)</div>" &
+            "<div class='ba'><i style='width:100%'></i></div>" &
+            "<div class='nu'>" & FORMAT ( _nEsp, "#,0" ) & "</div>" &
+            "<div class='nu'>" & _tVEsp & "</div>" &
+            "<div class='nu'>" & _tDEsp & "</div></div>" &
+            "<div class='ft'>Espera por desenho: o repasse só anda quando um marco externo acontece (o APF nas Villas, a entrega das chaves nos demais). Fica fora da fila de trabalho e das barras acima.</div></div>" &
+    "</div>"
+
+
+// ---- 3. Aging: quanto tempo cada fase está parada ----
+// Visual: HTML Content. Campo Values: [Aging Repasses HTML]. Linhas são as fases da fila de
+// trabalho, colunas são as faixas de dias na etapa atual. A cor do quadrado cresce com a
+// quantidade (azul) e fica vermelha a partir da faixa de 31 dias. Foto de hoje.
+Aging Repasses HTML =
+
+// As cinco faixas de fato_repasses[faixa_dias_na_etapa], na ordem. "ord" >= 3 são as de mais de 30 dias.
+VAR _faixasT =
+    DATATABLE (
+        "faixa", STRING, "ord", INTEGER,
+        { { "1 - Até 7 dias", 1 }, { "2 - 8 a 30 dias", 2 }, { "3 - 31 a 90 dias", 3 }, { "4 - 91 a 180 dias", 4 }, { "5 - Mais de 180 dias", 5 } }
+    )
+VAR _fila =
+    FILTER (
+        SUMMARIZE ( dim_repasse_etapa, dim_repasse_etapa[fase_ordem], dim_repasse_etapa[fase] ),
+        dim_repasse_etapa[fase_ordem] IN { 1, 2, 3, 4, 6 }
+    )
+// Maior contagem de uma célula (fase x faixa), para a escala de cor.
+VAR _maxCel =
+    MAXX (
+        _fila,
+        MAXX ( _faixasT, CALCULATE ( [Repasses Em Andamento], fato_repasses[faixa_dias_na_etapa] = [faixa] ) )
+    )
+
+VAR _linhas =
+    CONCATENATEX (
+        _fila,
+        VAR _tot = COALESCE ( [Repasses Em Andamento], 0 )
+        VAR _cel =
+            CONCATENATEX (
+                _faixasT,
+                VAR _f   = [faixa]
+                VAR _n   = COALESCE ( CALCULATE ( [Repasses Em Andamento], fato_repasses[faixa_dias_na_etapa] = _f ), 0 )
+                VAR _t   = DIVIDE ( _n, _maxCel )
+                VAR _vm  = [ord] >= 3
+                // de #F3F6F8 até o azul #003254 (ou até o vermelho #8A1C1C nas faixas de 31 dias ou mais)
+                VAR _r   = ROUND ( 243 + ( IF ( _vm, 138, 0 )  - 243 ) * _t, 0 )
+                VAR _g   = ROUND ( 246 + ( IF ( _vm, 28, 50 )  - 246 ) * _t, 0 )
+                VAR _b   = ROUND ( 248 + ( IF ( _vm, 28, 84 )  - 248 ) * _t, 0 )
+                VAR _txt = IF ( _t >= 0.5, "#FFFFFF", "#1F2937" )
+                RETURN
+                    IF (
+                        _n = 0,
+                        "<div class='c z'>-</div>",
+                        "<div class='c' style='background:rgb(" & _r & "," & _g & "," & _b & ");color:" & _txt & "'>" & FORMAT ( _n, "#,0" ) & "</div>"
+                    ),
+                "",
+                [ord], ASC
+            )
+        RETURN
+            "<div class='lb'>" & MID ( dim_repasse_etapa[fase], 4, 60 ) & "</div>" & _cel & "<div class='c tt'>" & FORMAT ( _tot, "#,0" ) & "</div>",
+        "",
+        dim_repasse_etapa[fase_ordem], ASC
+    )
+
+VAR _css =
+    "<style>" &
+    "html,body{margin:0;padding:0;height:100%;background:#fff;}" &
+    ".a{font-family:'Segoe UI Semibold','Segoe UI',Arial,sans-serif;font-weight:600;color:#1F2937;box-sizing:border-box;padding:24px 30px;height:100%;overflow:hidden;}" &
+    ".a *{box-sizing:border-box;}" &
+    ".a .ti{font-size:40px;color:#003254;line-height:1.1;}" &
+    ".a .su{font-size:26px;color:#6B7280;margin:4px 0 18px;}" &
+    ".a .g{display:grid;grid-template-columns:minmax(560px,2fr) repeat(5,1fr) 130px;gap:8px;align-items:stretch;}" &
+    ".a .h{font-size:22px;letter-spacing:.03em;color:#6B7280;text-align:center;padding:4px 0 8px;white-space:normal;line-height:1.15;}" &
+    ".a .h.o{color:#8A1C1C;}" &
+    ".a .lb{font-size:32px;display:flex;align-items:center;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}" &
+    ".a .c{font-size:34px;text-align:center;border-radius:12px;padding:10px 0;background:#F3F6F8;}" &
+    ".a .c.z{color:#9CA3AF;background:#F9FAFB;}" &
+    ".a .c.tt{background:transparent;color:#003254;}" &
+    ".a .ft{margin-top:14px;font-size:24px;color:#6B7280;font-weight:400;line-height:1.35;}" &
+    "</style>"
+
+RETURN
+    _css &
+    "<div class='a'>" &
+        "<div class='ti'>Tempo parado na etapa atual</div>" &
+        "<div class='su'>repasses em tratativa, por fase e faixa de dias (foto de hoje)</div>" &
+        "<div class='g'>" &
+            "<div class='h'></div><div class='h'>ATÉ 7 DIAS</div><div class='h'>8 A 30 DIAS</div>" &
+            "<div class='h o'>31 A 90 DIAS</div><div class='h o'>91 A 180 DIAS</div><div class='h o'>MAIS DE 180</div><div class='h'>TOTAL</div>" &
+            _linhas &
+        "</div>" &
+        "<div class='ft'>A espera por marco (APF e chaves) fica fora desta matriz. Vermelho marca as faixas de mais de 30 dias.</div>" &
+    "</div>"
+
+
+// ---- 4. Tempo por etapa ----
+// Visual: HTML Content. Campo Values: [Tempo Por Etapa Repasses HTML]. Para cada etapa do
+// caminho (fica de fora a espera por marco e as etapas descontinuadas), a mediana de dias em
+// azul sobre o p90 em azul claro: a barra clara é "o pior dos casos típicos". Só entra etapa com
+// 30 passagens ou mais (menos que isso é ruído). Segue o filtro de período, que aqui é o dia em
+// que a passagem terminou (data_saida). Em 06/nov/2026 os gargalos são Recolhimento | ITBI (13,8
+// dias de mediana), Prenotado | Cartório (11,2), Emissão de Minuta (9,1) e as etapas de pendência.
+Tempo Por Etapa Repasses HTML =
+
+VAR _minPassagens = 30
+VAR _t =
+    FILTER (
+        ADDCOLUMNS (
+            SUMMARIZE (
+                FILTER (
+                    fato_repasses_etapas,
+                    fato_repasses_etapas[eh_espera] = FALSE () && fato_repasses_etapas[eh_descontinuada] = FALSE ()
+                ),
+                fato_repasses_etapas[situacao],
+                fato_repasses_etapas[ordem_exibicao],
+                fato_repasses_etapas[eh_pendencia]
+            ),
+            "_n",   CALCULATE ( [Passagens Por Etapa] ),
+            "_med", CALCULATE ( [Mediana Dias Na Etapa] ),
+            "_p90", CALCULATE ( [P90 Dias Na Etapa] )
+        ),
+        [_n] >= _minPassagens
+    )
+VAR _max = MAXX ( _t, [_p90] )
+
+VAR _linhas =
+    CONCATENATEX (
+        _t,
+        VAR _med  = [_med]
+        VAR _p90  = [_p90]
+        VAR _wm   = FORMAT ( MIN ( 100, DIVIDE ( _med, _max ) * 100 ), "0" )
+        VAR _wp   = FORMAT ( MIN ( 100, DIVIDE ( _p90, _max ) * 100 ), "0" )
+        VAR _tag  = IF ( fato_repasses_etapas[eh_pendencia], " <span class='pe'>pendência</span>", "" )
+        RETURN
+            "<div class='r'>"
+                & "<div class='lb'>" & SUBSTITUTE ( SUBSTITUTE ( fato_repasses_etapas[situacao], "&", "&amp;" ), "<", "&lt;" ) & _tag & "</div>"
+                & "<div class='ba'><i class='p' style='width:" & _wp & "%'></i><i class='m" & IF ( fato_repasses_etapas[eh_pendencia], " a", "" ) & "' style='width:" & _wm & "%'></i></div>"
+                & "<div class='nu'>" & FORMAT ( _med, "#,0.0" ) & " d</div>"
+                & "<div class='nu s'>" & FORMAT ( _p90, "#,0" ) & " d</div>"
+                & "<div class='nu s'>" & FORMAT ( [_n], "#,0" ) & "</div></div>",
+        "",
+        fato_repasses_etapas[ordem_exibicao], ASC
+    )
+
+VAR _css =
+    "<style>" &
+    "html,body{margin:0;padding:0;height:100%;background:#fff;}" &
+    ".e{font-family:'Segoe UI Semibold','Segoe UI',Arial,sans-serif;font-weight:600;color:#1F2937;box-sizing:border-box;padding:24px 30px;height:100%;overflow:hidden;}" &
+    ".e *{box-sizing:border-box;}" &
+    ".e .ti{font-size:40px;color:#003254;line-height:1.1;}" &
+    ".e .su{font-size:26px;color:#6B7280;margin:4px 0 14px;}" &
+    ".e .hd,.e .r{display:grid;grid-template-columns:minmax(620px,1.7fr) 3fr 150px 130px 160px;align-items:center;gap:16px;}" &
+    ".e .hd{font-size:22px;letter-spacing:.04em;color:#6B7280;padding:0 0 8px;border-bottom:2px solid #E5E7EB;}" &
+    ".e .hd span:nth-child(n+3){text-align:right;}" &
+    ".e .r{font-size:28px;padding:6px 0;border-bottom:1px solid #E5E7EB;}" &
+    ".e .lb{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}" &
+    ".e .pe{font-size:20px;color:#8A1C1C;border:2px solid #8A1C1C;border-radius:999px;padding:0 10px;margin-left:10px;vertical-align:middle;}" &
+    ".e .ba{position:relative;height:26px;border-radius:13px;background:#F3F4F6;overflow:hidden;}" &
+    ".e .ba i{position:absolute;left:0;top:0;height:100%;border-radius:13px;animation:g .8s ease-out both;}" &
+    ".e .ba i.p{background:#BFD2DE;}" &
+    ".e .ba i.m{background:#003254;}" &
+    ".e .ba i.m.a{background:#8A1C1C;}" &
+    ".e .nu{text-align:right;white-space:nowrap;}" &
+    ".e .nu.s{color:#6B7280;font-weight:400;}" &
+    ".e .ft{margin-top:12px;font-size:24px;color:#6B7280;line-height:1.35;font-weight:400;}" &
+    "@keyframes g{from{width:0}}" &
+    "</style>"
+
+RETURN
+    _css &
+    "<div class='e'>" &
+        "<div class='ti'>Onde o repasse demora</div>" &
+        "<div class='su'>dias por etapa, das passagens que terminaram no período</div>" &
+        "<div class='hd'><span>ETAPA</span><span></span><span>MEDIANA</span><span>P90</span><span>PASSAGENS</span></div>" &
+        _linhas &
+        "<div class='ft'>Barra escura: mediana. Barra clara: p90 (9 de cada 10 passagens duram até isso). Vermelho: etapa de pendência. Não entram as esperas por marco (APF e chaves) nem as etapas que o CVCRM aposentou.</div>" &
+    "</div>"
+
+
+// ---- 5. Série mensal: abertos x finalizados ----
+// Visual: HTML Content. Campo Values: [Série Repasses HTML]. Os últimos 18 meses, ignorando o
+// filtro de período (o gráfico é o próprio eixo do tempo). Azul: repasses abertos no mês (pela
+// data de abertura). Verde: finalizados no mês (pela data de finalização, relacionamento inativo
+// ativado com USERELATIONSHIP). Seguem valendo os filtros de empreendimento e correspondente.
+// Atenção: os picos antigos (abr/2024) são de finalização em lote, não de produção.
+Série Repasses HTML =
+
+VAR _mesAtual = FORMAT ( TODAY (), "YYYY-MM" )
+VAR _mesIni   = FORMAT ( EDATE ( TODAY (), -17 ), "YYYY-MM" )
+VAR _meses =
+    FILTER (
+        SUMMARIZE ( ALL ( dim_calendario ), dim_calendario[ano_mes], dim_calendario[mes_abrev], dim_calendario[ano] ),
+        dim_calendario[ano_mes] >= _mesIni && dim_calendario[ano_mes] <= _mesAtual
+    )
+VAR _t =
+    ADDCOLUMNS (
+        _meses,
+        "_ab",
+            VAR _m = dim_calendario[ano_mes]
+            RETURN CALCULATE ( COALESCE ( [Repasses], 0 ), REMOVEFILTERS ( dim_calendario ), dim_calendario[ano_mes] = _m ),
+        "_fi",
+            VAR _m = dim_calendario[ano_mes]
+            RETURN CALCULATE (
+                COALESCE ( [Repasses Finalizados], 0 ),
+                REMOVEFILTERS ( dim_calendario ),
+                dim_calendario[ano_mes] = _m,
+                USERELATIONSHIP ( dim_calendario[data], fato_repasses[data_finalizacao] )
+            )
+    )
+VAR _max = MAXX ( _t, MAX ( [_ab], [_fi] ) )
+VAR _totAb = SUMX ( _t, [_ab] )
+VAR _totFi = SUMX ( _t, [_fi] )
+
+VAR _colunas =
+    CONCATENATEX (
+        _t,
+        VAR _ab = [_ab]
+        VAR _fi = [_fi]
+        VAR _hA = FORMAT ( DIVIDE ( _ab, _max ) * 100, "0" )
+        VAR _hF = FORMAT ( DIVIDE ( _fi, _max ) * 100, "0" )
+        RETURN
+            "<div class='mes'>"
+                & "<div class='bs'>"
+                    & "<i class='ab' style='height:" & _hA & "%' title='" & FORMAT ( _ab, "#,0" ) & " abertos'></i>"
+                    & "<i class='fi' style='height:" & _hF & "%' title='" & FORMAT ( _fi, "#,0" ) & " finalizados'></i>"
+                & "</div>"
+                & "<div class='nv'>" & FORMAT ( _ab, "#,0" ) & "<span>" & FORMAT ( _fi, "#,0" ) & "</span></div>"
+                & "<div class='mm'>" & dim_calendario[mes_abrev] & "/" & FORMAT ( MOD ( dim_calendario[ano], 100 ), "00" ) & "</div>"
+            & "</div>",
+        "",
+        dim_calendario[ano_mes], ASC
+    )
+
+VAR _css =
+    "<style>" &
+    "html,body{margin:0;padding:0;height:100%;background:#fff;}" &
+    ".s{font-family:'Segoe UI Semibold','Segoe UI',Arial,sans-serif;font-weight:600;color:#1F2937;box-sizing:border-box;padding:24px 30px;height:100%;overflow:hidden;display:flex;flex-direction:column;}" &
+    ".s *{box-sizing:border-box;}" &
+    ".s .top{display:flex;align-items:baseline;gap:28px;flex-wrap:wrap;}" &
+    ".s .ti{font-size:40px;color:#003254;line-height:1.1;}" &
+    ".s .lg{font-size:26px;color:#6B7280;display:flex;gap:26px;margin-left:auto;}" &
+    ".s .lg i{display:inline-block;width:22px;height:22px;border-radius:6px;margin-right:8px;vertical-align:-3px;}" &
+    ".s .lg .ab{background:#003254;}" &
+    ".s .lg .fi{background:#1B6B3A;}" &
+    ".s .gr{flex:1;display:flex;gap:10px;align-items:stretch;margin-top:18px;min-height:0;}" &
+    ".s .mes{flex:1 1 0;min-width:0;display:flex;flex-direction:column;}" &
+    ".s .bs{flex:1;display:flex;gap:5px;align-items:flex-end;border-bottom:3px solid #E5E7EB;}" &
+    ".s .bs i{display:block;flex:1;min-height:3px;border-radius:6px 6px 0 0;animation:g .8s ease-out both;}" &
+    ".s .bs i.ab{background:#003254;}" &
+    ".s .bs i.fi{background:#1B6B3A;}" &
+    ".s .nv{font-size:26px;text-align:center;color:#003254;padding-top:8px;line-height:1.1;}" &
+    ".s .nv span{display:block;color:#1B6B3A;}" &
+    ".s .mm{font-size:22px;text-align:center;color:#6B7280;padding-top:4px;text-transform:uppercase;}" &
+    ".s .ft{margin-top:12px;font-size:24px;color:#6B7280;line-height:1.35;font-weight:400;}" &
+    "@keyframes g{from{transform:scaleY(0);transform-origin:bottom}}" &
+    "</style>"
+
+RETURN
+    _css &
+    "<div class='s'>" &
+        "<div class='top'><div class='ti'>Repasses abertos e finalizados por mês</div>" &
+            "<div class='lg'><span><i class='ab'></i>abertos: " & FORMAT ( _totAb, "#,0" ) & "</span><span><i class='fi'></i>finalizados: " & FORMAT ( _totFi, "#,0" ) & "</span></div></div>" &
+        "<div class='gr'>" & _colunas & "</div>" &
+        "<div class='ft'>Últimos 18 meses, sem o filtro de período. Abertos pela data de abertura do repasse, finalizados pela data da última mudança de situação. Picos de meses antigos (como abril de 2024) são finalizações em lote.</div>" &
+    "</div>"
+
+
+// =============================================================================
+// ---- 6. Tabelas com clique: por correspondente e por empreendimento ----
+// Visual: HTML Content com Granularity: uma linha por correspondente (ou por empreendimento), e o
+// clique na linha filtra o resto da página (Ctrl+clique acumula). Mesmo mecanismo da tabela de
+// Atendimentos do CVCRM e da URA: o visual só ganha contexto de linha quando o campo Granularity
+// recebe uma coluna, e passa a chamar a medida de Values uma vez por linha.
+//
+// O CSS é autocontido (não deriva de outra página): em 15/out/2026 o CVCRM mudou a base e três
+// tabelas derivadas se embaralharam. Se quiser mudar o estilo das duas tabelas, mude só
+// [CSS Tabela Repasses (linhas)].
+// A legenda do rodapé (.cap) leva width:0 e min-width:100%: sem isso a frase longa, que ocupa a
+// grade inteira, soma a largura dela às colunas e a tabela fica quase duas vezes mais larga.
+//
+// Configuração do visual (a do empreendimento troca só os campos):
+//   Values          -> [Linha Correspondente Repasse HTML]
+//   Granularity     -> dim_correspondente[correspondente]
+//   Tooltips        -> [Repasses por Linha (ordenação)]
+//   Classificar por -> Repasses por Linha (ordenação), decrescente
+//   Formatar -> Stylesheet -> fx -> [CSS Tabela Repasses (linhas)]
+//   Formatar -> Cross-filtering -> Ativar; Transparency 0
+//   Formatar -> No data message -> "Nenhum repasse no período selecionado."
+// =============================================================================
+
+CSS Tabela Repasses (linhas) =
+    "#htmlContent{display:grid;grid-template-columns:minmax(300px,520px) repeat(7,minmax(max-content,auto));align-content:start;font-family:'Segoe UI','Segoe UI Semibold',Arial,sans-serif;font-size:34px;color:#1F2937;}" &
+    ".htmlViewerEntry,.htmlViewerEntry>div,.hdr{display:contents;}" &
+    ".htmlViewerEntry:not(:first-child) .hdr{display:none;}" &
+    ".th{position:sticky;top:0;z-index:1;background:#003254;color:#fff;font-weight:600;font-size:24px;letter-spacing:.02em;text-align:center;padding:18px 12px;white-space:normal;line-height:1.15;overflow:hidden;}" &
+    ".th:first-child{border-radius:12px 0 0 0;text-align:left;}" &
+    ".th:last-child{border-radius:0 12px 0 0;}" &
+    ".td{padding:12px 12px;text-align:center;border-bottom:1px solid #E5E7EB;white-space:nowrap;overflow:hidden;cursor:pointer;background-color:#fff;}" &
+    ".td.nome{text-align:left;font-weight:600;white-space:normal;}" &
+    ".htmlViewerEntry:nth-child(even) .td{background-color:#F3F6F8;}" &
+    ".htmlViewerEntry:hover .td{background-color:#E8EEF2;}" &
+    ".htmlViewerEntry.unselected .td{opacity:.35;}" &
+    ".sit{display:inline-block;padding:4px 16px;border-radius:999px;font-size:30px;font-weight:600;color:#fff;}" &
+    ".sit-cancelado{background:#8A1C1C;}" &
+    ".sit-finalizado{background:#1B6B3A;}" &
+    ".sit-outra{background:#6B7280;}" &
+    ".sub{font-size:22px;font-weight:600;color:#6B7280;margin-left:12px;}" &
+    ".semid{color:#6B7280;font-style:italic;}" &
+    ".cap{display:none;grid-column:1/-1;width:0;min-width:100%;font-size:26px;color:#6B7280;padding:14px 24px 0 24px;text-align:center;font-weight:400;}" &
+    ".htmlViewerEntry:last-child .cap{display:block;}"
+
+// Medida âncora só para o campo Tooltips (para virar opção em "Classificar por").
+Repasses por Linha (ordenação) =
+[Repasses]
+
+// Cabeçalho das duas tabelas: muda só a primeira coluna.
+Cabeçalho Repasses HTML =
+"<div class='th'>REPASSES</div><div class='th'>FINALIZADOS</div><div class='th'>SEM REPASSE</div>"
+    & "<div class='th'>CONVERSÃO</div><div class='th'>EM ANDAMENTO</div>"
+    & "<div class='th'>CICLO MEDIANO</div><div class='th'>FINANCIADO</div></div>"
+
+// As células depois do total, iguais nas duas tabelas. "Sem repasse" é cancelado, distrato e cessão.
+// Conversão: verde a partir de 60%, cinza de 40% a 59% e vermelho abaixo de 40% (cortes na variável
+// _classe; ajuste ao critério da gestão). Em andamento é a foto de hoje. Financiado soma só os
+// finalizados com valor informado (desde 2025).
+Células Repasses HTML =
+VAR _fin    = COALESCE ( [Repasses Finalizados], 0 )
+VAR _sem    = COALESCE ( [Repasses Encerrados Sem Repasse], 0 )
+VAR _conv   = [Conversão de Repasse]
+VAR _and    = COALESCE ( [Repasses Em Andamento], 0 )
+VAR _ciclo  = [Ciclo Mediano (dias)]
+VAR _fina   = COALESCE ( [Financiado Finalizado], 0 )
+VAR _classe = IF ( ISBLANK ( _conv ), "sit-outra", IF ( _conv >= 0.6, "sit-finalizado", IF ( _conv >= 0.4, "sit-outra", "sit-cancelado" ) ) )
+VAR _tConv  = IF ( ISBLANK ( _conv ), "--", FORMAT ( _conv, "0%" ) )
+VAR _tCiclo = IF ( ISBLANK ( _ciclo ), "--", FORMAT ( _ciclo, "#,0" ) & " d" )
+VAR _tFina  = IF ( _fina = 0, "--", "R$ " & IF ( _fina >= 1000000, FORMAT ( _fina / 1000000, "#,0.0" ) & " mi", FORMAT ( _fina / 1000, "#,0" ) & " mil" ) )
+RETURN
+    "<div class='td'>" & FORMAT ( _fin, "#,0" ) & "</div>"
+        & "<div class='td'>" & FORMAT ( _sem, "#,0" ) & "</div>"
+        & "<div class='td'><span class='sit " & _classe & "'>" & _tConv & "</span></div>"
+        & "<div class='td'>" & FORMAT ( _and, "#,0" ) & "</div>"
+        & "<div class='td'>" & _tCiclo & "</div>"
+        & "<div class='td'>" & _tFina & "</div>"
+
+Linha Correspondente Repasse HTML =
+VAR _corr   = SELECTEDVALUE ( dim_correspondente[correspondente] )
+VAR _rep    = COALESCE ( [Repasses], 0 )
+// A barra de volume é relativa ao maior correspondente DENTRO do recorte atual.
+VAR _max    = MAXX ( ALLSELECTED ( dim_correspondente[correspondente] ), [Repasses] )
+VAR _barra  = FORMAT ( MIN ( 100, DIVIDE ( _rep, _max ) * 100 ), "0" )
+VAR _rotulo = SUBSTITUTE ( SUBSTITUTE ( SUBSTITUTE ( COALESCE ( _corr, "" ), "&", "&amp;" ), "<", "&lt;" ), ">", "&gt;" )
+// O cabeçalho só é desenhado na PRIMEIRA linha do visual (ver o CSS). Se ela vier vazia, devolve só
+// o cabeçalho, e a tabela nunca fica sem ele.
+VAR _hdr    = "<div class='hdr'><div class='th'>CORRESPONDENTE</div>" & [Cabeçalho Repasses HTML]
+RETURN
+    IF (
+        NOT ISBLANK ( _corr ) && _rep > 0,
+        _hdr
+            & "<div class='td nome" & IF ( _corr = "Sem correspondente", " semid", "" ) & "'>" & _rotulo & "</div>"
+            & "<div class='td' style='background-image:linear-gradient(to right,rgba(0,50,84,.14) " & _barra & "%,transparent " & _barra & "%)'>" & FORMAT ( _rep, "#,0" ) & "</div>"
+            & [Células Repasses HTML]
+            & "<div class='cap'>Conversão: finalizados dividido pelos repasses que chegaram a um fim (finalizado, cancelado, distrato ou cessão). Verde a partir de 60%, cinza de 40% a 59%, vermelho abaixo de 40%. Ciclo: mediana de dias da abertura à finalização, sem lotes. Em andamento: foto de hoje. Financiado: só finalizados com valor informado (desde 2025).</div>",
+        _hdr
+    )
+
+// Mesma tabela por empreendimento. Config: Granularity -> dim_empreendimento[empreendimento_conformado].
+Linha Empreendimento Repasse HTML =
+VAR _emp    = SELECTEDVALUE ( dim_empreendimento[empreendimento_conformado] )
+VAR _rep    = COALESCE ( [Repasses], 0 )
+VAR _max    = MAXX ( ALLSELECTED ( dim_empreendimento[empreendimento_conformado] ), [Repasses] )
+VAR _barra  = FORMAT ( MIN ( 100, DIVIDE ( _rep, _max ) * 100 ), "0" )
+VAR _rotulo = SUBSTITUTE ( SUBSTITUTE ( SUBSTITUTE ( COALESCE ( _emp, "" ), "&", "&amp;" ), "<", "&lt;" ), ">", "&gt;" )
+VAR _hdr    = "<div class='hdr'><div class='th'>EMPREENDIMENTO</div>" & [Cabeçalho Repasses HTML]
+RETURN
+    IF (
+        NOT ISBLANK ( _emp ) && _rep > 0,
+        _hdr
+            & "<div class='td nome'>" & _rotulo & "</div>"
+            & "<div class='td' style='background-image:linear-gradient(to right,rgba(0,50,84,.14) " & _barra & "%,transparent " & _barra & "%)'>" & FORMAT ( _rep, "#,0" ) & "</div>"
+            & [Células Repasses HTML]
+            & "<div class='cap'>Empreendimento sem nenhum finalizado e com repasses em espera costuma ser obra ainda não entregue (chaves) ou projeto que espera o APF. A conversão só faz sentido para quem já tem repasses encerrados.</div>",
+        _hdr
+    )
+
+
+// ---- 7. Repasses em tratativa, um por linha ----
+// Visual: HTML Content com Granularity = fato_repasses[id_repasse]. É a fila de trabalho do
+// backoffice: ordenada pelos que estão há mais dias na mesma etapa. Filtro do visual:
+// fato_repasses[condicao_andamento] = "Em tratativa". O clique filtra a página.
+// Não mostra nome nem documento do cliente: a reserva e a unidade identificam a venda no CVCRM.
+//
+// Configuração do visual:
+//   Values          -> [Linha Repasse HTML]
+//   Granularity     -> fato_repasses[id_repasse]
+//   Tooltips        -> [Dias Na Etapa (ordenação)]
+//   Classificar por -> Dias Na Etapa (ordenação), decrescente
+//   Formatar -> Stylesheet -> fx -> [CSS Tabela Repasses Detalhe (linhas)]
+//   Formatar -> Cross-filtering -> Ativar; Transparency 0
+//   Formatar -> No data message -> "Nenhum repasse em tratativa."
+CSS Tabela Repasses Detalhe (linhas) =
+[CSS Tabela Repasses (linhas)]
+    & "#htmlContent{grid-template-columns:repeat(9,minmax(max-content,auto));font-size:28px;}"
+    & ".td{text-align:left;}"
+    & ".td.c{text-align:center;}"
+
+Dias Na Etapa (ordenação) =
+MAX ( fato_repasses[dias_na_etapa] )
+
+Linha Repasse HTML =
+VAR _id    = SELECTEDVALUE ( fato_repasses[id_repasse] )
+VAR _res   = SELECTEDVALUE ( fato_repasses[id_reserva] )
+VAR _emp   = SUBSTITUTE ( SUBSTITUTE ( COALESCE ( SELECTEDVALUE ( fato_repasses[empreendimento_conformado] ), "" ), "&", "&amp;" ), "<", "&lt;" )
+VAR _bloco = COALESCE ( SELECTEDVALUE ( fato_repasses[bloco] ), "" )
+VAR _und   = COALESCE ( SELECTEDVALUE ( fato_repasses[unidade] ), "" )
+VAR _loc   = SUBSTITUTE ( SUBSTITUTE ( IF ( _bloco <> "" && _und <> "", _bloco & " / " & _und, _bloco & _und ), "&", "&amp;" ), "<", "&lt;" )
+VAR _sit   = SUBSTITUTE ( SUBSTITUTE ( COALESCE ( SELECTEDVALUE ( fato_repasses[situacao] ), "" ), "&", "&amp;" ), "<", "&lt;" )
+VAR _fase  = MID ( COALESCE ( SELECTEDVALUE ( fato_repasses[fase] ), "" ), 4, 60 )
+VAR _dias  = SELECTEDVALUE ( fato_repasses[dias_na_etapa] )
+VAR _lim   = [Dias Para Considerar Parado]
+VAR _classe = IF ( _dias <= 7, "sit-finalizado", IF ( _dias <= _lim, "sit-outra", "sit-cancelado" ) )
+VAR _corr  = SUBSTITUTE ( SUBSTITUTE ( COALESCE ( SELECTEDVALUE ( fato_repasses[correspondente] ), "" ), "&", "&amp;" ), "<", "&lt;" )
+VAR _mod   = COALESCE ( SELECTEDVALUE ( fato_repasses[modalidade_financiamento] ), "--" )
+VAR _vgv   = SELECTEDVALUE ( fato_repasses[valor_contrato] )
+VAR _tVgv  = IF ( ISBLANK ( _vgv ), "--", "R$ " & FORMAT ( _vgv / 1000, "#,0" ) & " mil" )
+VAR _hdr   =
+    "<div class='hdr'><div class='th'>RESERVA</div><div class='th'>EMPREENDIMENTO</div><div class='th'>UNIDADE</div>"
+        & "<div class='th'>ETAPA</div><div class='th'>FASE</div><div class='th'>NA ETAPA</div>"
+        & "<div class='th'>CORRESPONDENTE</div><div class='th'>MODALIDADE</div><div class='th'>VGV</div></div>"
+RETURN
+    IF (
+        NOT ISBLANK ( _id ),
+        _hdr
+            & "<div class='td c'>" & _res & "</div>"
+            & "<div class='td'>" & _emp & "</div>"
+            & "<div class='td'>" & _loc & "</div>"
+            & "<div class='td'>" & _sit & "</div>"
+            & "<div class='td'>" & _fase & "</div>"
+            & "<div class='td c'><span class='sit " & _classe & "'>" & FORMAT ( _dias, "#,0" ) & " d</span></div>"
+            & "<div class='td'>" & _corr & "</div>"
+            & "<div class='td c'>" & _mod & "</div>"
+            & "<div class='td c'>" & _tVgv & "</div>",
+        _hdr
+    )
+
+
+// ---- 8. Critérios: o glossário da página ----
+// Visual: HTML Content (painel que abre por botão, como o da Telefonia). Campo Values:
+// [Critérios Repasses HTML]. Os números mudam com os filtros, então o texto nunca fica
+// desatualizado. Tudo em "em" a partir de font-size:16px em .g: para o painel ficar maior ou menor,
+// mude só esse número e o tamanho do visual.
+Critérios Repasses HTML =
+
+VAR _trat    = COALESCE ( [Repasses Em Tratativa], 0 )
+VAR _esp     = COALESCE ( [Repasses Em Espera], 0 )
+VAR _and     = COALESCE ( [Repasses Em Andamento], 0 )
+VAR _par     = COALESCE ( [Repasses Parados Em Tratativa], 0 )
+VAR _dias    = [Dias Para Considerar Parado]
+VAR _conv    = [Conversão de Repasse]
+VAR _ciclo   = [Ciclo Mediano (dias)]
+VAR _p90     = [Ciclo P90 (dias)]
+VAR _nCiclo  = COALESCE ( [Repasses Com Ciclo Confiável], 0 )
+VAR _retr    = [% Retrabalho]
+VAR _pos     = COALESCE ( [Distrato Pós-Repasse], 0 )
+VAR _semRep  = COALESCE ( [Vendas A Financiar Sem Repasse], 0 )
+VAR _tConv   = IF ( ISBLANK ( _conv ), "--", FORMAT ( _conv, "0.0%" ) )
+VAR _tCiclo  = IF ( ISBLANK ( _ciclo ), "--", FORMAT ( _ciclo, "#,0" ) & " d (p90 " & FORMAT ( _p90, "#,0" ) & " d)" )
+VAR _tRetr   = IF ( ISBLANK ( _retr ), "--", FORMAT ( _retr, "0%" ) )
+VAR _tEsp    = IF ( _and = 0, "--", FORMAT ( DIVIDE ( _esp, _and ), "0%" ) )
+
+VAR _css =
+    "<style>" &
+    "html,body{margin:0;padding:0;height:100%;background:#fff;}" &
+    ".g{font-family:'Segoe UI',Arial,sans-serif;font-size:16px;color:#1F2937;box-sizing:border-box;padding:1.2em 1.4em;height:100%;overflow:auto;}" &
+    ".g *{box-sizing:border-box;}" &
+    ".g h1{margin:0;font-size:1.6em;color:#003254;line-height:1.15;}" &
+    ".g .sub{margin:.25em 0 1.1em;font-size:.9em;color:#6B7280;}" &
+    ".g .grid{display:grid;grid-template-columns:repeat(3,1fr);gap:1em;}" &
+    ".g .it{background:#F3F6F8;border-radius:.8em;border-left:.35em solid #003254;padding:.9em 1.05em;}" &
+    ".g .it.c{border-left-color:#6B7280;}" &
+    ".g .it.r{border-left-color:#8A1C1C;}" &
+    ".g .w2{grid-column:span 2;}" &
+    ".g .w3{grid-column:span 3;}" &
+    ".g .tt{display:flex;justify-content:space-between;align-items:baseline;gap:.8em;}" &
+    ".g .tt b{font-size:1.05em;color:#003254;}" &
+    ".g .tt .v{font-size:1.15em;font-weight:700;color:#003254;white-space:nowrap;}" &
+    ".g .it.c .tt b,.g .it.c .tt .v{color:#4B5563;}" &
+    ".g .it.r .tt b,.g .it.r .tt .v{color:#8A1C1C;}" &
+    ".g p{margin:.55em 0 0;font-size:.88em;line-height:1.45;color:#374151;}" &
+    ".g ul{margin:.45em 0 0 1.1em;padding:0;font-size:.88em;line-height:1.45;color:#374151;}" &
+    ".g li{margin-top:.3em;}" &
+    ".g .ft{margin-top:1.1em;font-size:.8em;color:#6B7280;}" &
+    "</style>"
+
+RETURN
+    _css &
+    "<div class='g'>" &
+        "<h1>Como ler esta página</h1>" &
+        "<div class='sub'>Os números mudam com o período e os filtros escolhidos. Os cartões cinza são a foto de hoje.</div>" &
+        "<div class='grid'>" &
+
+            "<div class='it w3'><div class='tt'><b>O que é um repasse</b><span class='v'>35 etapas</span></div>" &
+                "<p>É a etapa em que o financiamento bancário do comprador (Caixa, por meio de um correspondente) é contratado, registrado e liberado para a construtora. Cada venda a financiar tem um repasse, que percorre o workflow do CVCRM até Repasse Finalizado. Termina de quatro jeitos: finalizado, cancelado, distrato ou cessão de direitos.</p></div>" &
+
+            "<div class='it c'><div class='tt'><b>Em tratativa</b><span class='v'>" & FORMAT ( _trat, "#,0" ) & "</span></div>" &
+                "<p>A fila de trabalho: em andamento e fora das esperas por marco. É onde a equipe e o correspondente precisam agir.</p></div>" &
+
+            "<div class='it c'><div class='tt'><b>Em espera</b><span class='v'>" & FORMAT ( _esp, "#,0" ) & "</span></div>" &
+                "<p>Aguardando APF (Villas) e Finan. Chaves: esperas longas por desenho, em que o repasse só anda quando um marco externo acontece. São " & _tEsp & " dos " & FORMAT ( _and, "#,0" ) & " repasses em andamento, por isso ficam fora das barras e do parado.</p></div>" &
+
+            "<div class='it r'><div class='tt'><b>Parado</b><span class='v'>" & FORMAT ( _par, "#,0" ) & "</span></div>" &
+                "<p>Repasse em tratativa na mesma etapa há mais de " & FORMAT ( _dias, "0" ) & " dias (a constante [Dias Para Considerar Parado]). Conta a etapa atual, e não a idade do repasse.</p></div>" &
+
+            "<div class='it'><div class='tt'><b>Conversão</b><span class='v'>" & _tConv & "</span></div>" &
+                "<p>Finalizados divididos pelos repasses que chegaram a um fim (finalizado, cancelado, distrato ou cessão). Não conta o que ainda está andando. Cai em empreendimento de obra ainda não entregue, porque o repasse fica em espera e não finaliza.</p></div>" &
+
+            "<div class='it'><div class='tt'><b>Ciclo</b><span class='v'>" & _tCiclo & "</span></div>" &
+                "<p>Dias corridos da abertura à finalização, só de finalizados sem lote nas duas pontas (" & FORMAT ( _nCiclo, "#,0" ) & " repasses neste recorte). Lote é um dia em que 40 repasses ou mais foram abertos, ou mudaram de situação, juntos: carga de migração ou limpeza em massa, que não mede o tempo real do processo.</p></div>" &
+
+            "<div class='it r'><div class='tt'><b>Retrabalho</b><span class='v'>" & _tRetr & "</span></div>" &
+                "<p>Dos finalizados, quantos passaram ao menos uma vez por uma etapa de pendência ou conferência (Pendência, Atualização Documental, Conferência | Reavaliar, Divergência, Jurídico e parecidas).</p></div>" &
+
+            "<div class='it r'><div class='tt'><b>Pós-repasse</b><span class='v'>" & FORMAT ( _pos, "#,0" ) & "</span></div>" &
+                "<p>Repasses que chegaram a finalizar (o dinheiro entrou) e depois viraram distrato ou cancelamento. É o desfazimento mais caro: o banco já pagou.</p></div>" &
+
+            "<div class='it r'><div class='tt'><b>Vendas a financiar sem repasse</b><span class='v'>" & FORMAT ( _semRep, "#,0" ) & "</span></div>" &
+                "<p>Vendas de Financiamento na Planta ou Chaves que não têm repasse aberto. Venda direta e à vista não passam por banco e ficam de fora. É a lista de quem o backoffice precisa abrir.</p></div>" &
+
+            "<div class='it w3'><div class='tt'><b>Valores e origem dos dados</b><span class='v'>CVCRM, de hora em hora</span></div>" &
+                "<p>O valor do contrato vem em todos os repasses. O valor financiado (dívida com o banco, subsídio e FGTS) só é confiável a partir de 2025: os repasses de 2023 e 2024 vieram da migração para o CVCRM, e a maioria dos finalizados deles tem tudo zerado. As datas de abertura e de finalização também sofrem com o lote da migração. Dados do módulo Repasse do CVCRM (API CVDW), carregados de hora em hora; uma leitura completa por dia remove o que o CVCRM apagou.</p></div>" &
+
+        "</div>" &
+        "<div class='ft'>Conferência: Repasses em andamento = Em tratativa + Em espera.</div>" &
+    "</div>"

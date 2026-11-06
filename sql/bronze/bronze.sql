@@ -874,6 +874,9 @@ CREATE UNIQUE INDEX IF NOT EXISTS ux_comissoes_snapshot_dia ON bronze.comissoes_
 CREATE INDEX IF NOT EXISTS ix_comissoes_snapshot_data ON bronze.comissoes_snapshot (_data_snapshot);
 
 -- ===== comissoes_pagamentos (comissoes/pagamentos) =====
+-- `unidade` era numeric (tipo inferido de uma amostra pequena em jun/2026), mas a API manda texto
+-- como "153 - TERRENISTA" e "Lote 5 Casa 05" em 34% das linhas, que viravam NULL (achado em
+-- 06/nov/2026). Agora é text. O bloco DO ao final migra bancos que já tinham a coluna numeric.
 CREATE TABLE IF NOT EXISTS bronze.comissoes_pagamentos (
     _id_tecnico bigint GENERATED ALWAYS AS IDENTITY,
     referencia numeric,
@@ -883,7 +886,7 @@ CREATE TABLE IF NOT EXISTS bronze.comissoes_pagamentos (
     valor numeric,
     vencimento date,
     bloco text,
-    unidade numeric,
+    unidade text,
     situacao text,
     idboleto text,
     _hash_linha text NOT NULL,
@@ -903,7 +906,7 @@ CREATE TABLE IF NOT EXISTS bronze.comissoes_pagamentos_snapshot (
     valor numeric,
     vencimento date,
     bloco text,
-    unidade numeric,
+    unidade text,
     situacao text,
     idboleto text,
     _hash_linha text,
@@ -913,6 +916,15 @@ CREATE TABLE IF NOT EXISTS bronze.comissoes_pagamentos_snapshot (
 );
 CREATE UNIQUE INDEX IF NOT EXISTS ux_comissoes_pagamentos_snapshot_dia ON bronze.comissoes_pagamentos_snapshot (_data_snapshot, idpagamento);
 CREATE INDEX IF NOT EXISTS ix_comissoes_pagamentos_snapshot_data ON bronze.comissoes_pagamentos_snapshot (_data_snapshot);
+DO $$
+BEGIN
+    IF (SELECT data_type FROM information_schema.columns
+        WHERE table_schema = 'bronze' AND table_name = 'comissoes_pagamentos'
+          AND column_name = 'unidade') = 'numeric' THEN
+        ALTER TABLE bronze.comissoes_pagamentos          ALTER COLUMN unidade TYPE text USING unidade::text;
+        ALTER TABLE bronze.comissoes_pagamentos_snapshot ALTER COLUMN unidade TYPE text USING unidade::text;
+    END IF;
+END $$;
 
 -- ===== precadastros (precadastros) =====
 CREATE TABLE IF NOT EXISTS bronze.precadastros (
@@ -2360,3 +2372,489 @@ CREATE TABLE IF NOT EXISTS bronze.atendimentos_workflow_tempo_snapshot (
 );
 CREATE UNIQUE INDEX IF NOT EXISTS ux_atendimentos_workflow_tempo_snapshot_dia ON bronze.atendimentos_workflow_tempo_snapshot (_data_snapshot, idtempo);
 CREATE INDEX IF NOT EXISTS ix_atendimentos_workflow_tempo_snapshot_data ON bronze.atendimentos_workflow_tempo_snapshot (_data_snapshot);
+
+-- ===========================================================================
+-- COMISSÃO E REPASSE (nov/2026). Objetos novos do CVDW, mais as definições de workflow.
+-- Inventário em docs/cvcrm-api-inventario.md e análise em docs/comissoes-e-repasses.md.
+-- DDL escrito à mão, como o de pessoas_profissional e atendimentos_workflow_tempo
+-- (o gerador de DDL não existe mais no repo): tipos decididos por amostra ao vivo e as
+-- mesmas convenções da bronze (todo número é numeric, identificador como numeric ou text,
+-- data só como date/timestamptz quando o formato é ISO consistente).
+-- ===========================================================================
+
+-- ===== repasses (repasses) =====
+-- Repasse é a etapa em que o financiamento bancário do comprador (Caixa, via correspondente) é
+-- contratado, registrado e liberado para a construtora. Uma linha por repasse, 1:1 com a reserva
+-- (3.440 repasses distintos para 3.440 reservas em 06/nov/2026).
+-- DDL escrito à mão a partir de amostra ao vivo (3.440 registros, 06/nov/2026). Divergências da
+-- referência pública, confirmadas na API: a data da última modificação vem como `data_modificao`
+-- (sem o "c"), existem `ultima_atualizacao` e `data_modificao_situacao`, `reserva` vem sempre 0
+-- (o identificador da reserva é `idreserva`). A paginação repete e pula registros de mesma data de
+-- modificação (R32): com 500 por página o `idrepasse` repete em 6 linhas e outros 6 repasses nunca
+-- aparecem. O espelho confere os ids distintos com o total da origem e relê com outro tamanho.
+-- `referencia_data` é sempre igual a `data_modificao`, então o incremental enxerga qualquer edição.
+-- `campos_adicionais` traz o HISTÓRICO de cada campo customizado (uma entrada por edição, em ordem
+-- crescente de idcampo_valores), não só o valor atual: vale a entrada mais recente.
+CREATE TABLE IF NOT EXISTS bronze.repasses (
+    _id_tecnico bigint GENERATED ALWAYS AS IDENTITY,
+    referencia numeric,
+    referencia_data timestamptz,
+    ativo text,
+    idrepasse numeric,
+    idsituacao numeric,
+    data_cad timestamptz,
+    ultima_atualizacao timestamptz,
+    data_modificao_situacao timestamptz,
+    data_modificao timestamptz,
+    situacao text,
+    idreserva numeric,
+    idempreendimento numeric,
+    codigointerno_empreendimento numeric,
+    empreendimento text,
+    etapa text,
+    bloco text,
+    unidade text,
+    regiao text,
+    idcliente numeric,
+    documento_cliente text,
+    cliente text,
+    cep_cliente text,
+    parcela text,
+    idcontrato text,
+    contrato text,
+    contrato_quitado text,
+    contrato_liquidado text,
+    valor_previsto numeric,
+    parcela_conclusao numeric,
+    saldo_devedor numeric,
+    valor_divida numeric,
+    valor_subsidio numeric,
+    valor_fgts numeric,
+    valor_registro numeric,
+    valor_financiado numeric,
+    data_status_financiamento date,
+    registro_pago text,
+    valor_contrato numeric,
+    numero_contrato text,
+    data_registro date,
+    correspondente text,
+    banco text,
+    agencia text,
+    data_alteracao_status timestamptz,
+    data_venda timestamptz,
+    data_contrato_contabilizado date,
+    data_contrato_liberado date,
+    data_assinatura_de_contrato date,
+    liberar_assinatura text,
+    proxima_acao date,
+    num_matricula text,
+    recebendo_financiamento text,
+    itbi_pago text,
+    laudemio_pago text,
+    idlead text,
+    data_unidade_liberada date,
+    data_laudo_liberado date,
+    data_recurso_liberado date,
+    data_sincronizacao timestamptz,
+    data_cadastro timestamptz,
+    idunidade numeric,
+    reserva numeric,
+    campos_adicionais jsonb,
+    _hash_linha text NOT NULL,
+    _data_extracao timestamptz NOT NULL DEFAULT now(),
+    _pagina integer,
+    CONSTRAINT pk_repasses PRIMARY KEY (_id_tecnico)
+);
+CREATE UNIQUE INDEX IF NOT EXISTS ux_repasses_chave ON bronze.repasses (idrepasse);
+CREATE TABLE IF NOT EXISTS bronze.repasses_snapshot (
+    _id_snapshot bigint GENERATED ALWAYS AS IDENTITY,
+    _data_snapshot date NOT NULL DEFAULT CURRENT_DATE,
+    referencia numeric,
+    referencia_data timestamptz,
+    ativo text,
+    idrepasse numeric,
+    idsituacao numeric,
+    data_cad timestamptz,
+    ultima_atualizacao timestamptz,
+    data_modificao_situacao timestamptz,
+    data_modificao timestamptz,
+    situacao text,
+    idreserva numeric,
+    idempreendimento numeric,
+    codigointerno_empreendimento numeric,
+    empreendimento text,
+    etapa text,
+    bloco text,
+    unidade text,
+    regiao text,
+    idcliente numeric,
+    documento_cliente text,
+    cliente text,
+    cep_cliente text,
+    parcela text,
+    idcontrato text,
+    contrato text,
+    contrato_quitado text,
+    contrato_liquidado text,
+    valor_previsto numeric,
+    parcela_conclusao numeric,
+    saldo_devedor numeric,
+    valor_divida numeric,
+    valor_subsidio numeric,
+    valor_fgts numeric,
+    valor_registro numeric,
+    valor_financiado numeric,
+    data_status_financiamento date,
+    registro_pago text,
+    valor_contrato numeric,
+    numero_contrato text,
+    data_registro date,
+    correspondente text,
+    banco text,
+    agencia text,
+    data_alteracao_status timestamptz,
+    data_venda timestamptz,
+    data_contrato_contabilizado date,
+    data_contrato_liberado date,
+    data_assinatura_de_contrato date,
+    liberar_assinatura text,
+    proxima_acao date,
+    num_matricula text,
+    recebendo_financiamento text,
+    itbi_pago text,
+    laudemio_pago text,
+    idlead text,
+    data_unidade_liberada date,
+    data_laudo_liberado date,
+    data_recurso_liberado date,
+    data_sincronizacao timestamptz,
+    data_cadastro timestamptz,
+    idunidade numeric,
+    reserva numeric,
+    campos_adicionais jsonb,
+    _hash_linha text,
+    _data_extracao timestamptz,
+    _pagina integer,
+    CONSTRAINT pk_repasses_snapshot PRIMARY KEY (_id_snapshot)
+);
+CREATE UNIQUE INDEX IF NOT EXISTS ux_repasses_snapshot_dia ON bronze.repasses_snapshot (_data_snapshot, idrepasse);
+CREATE INDEX IF NOT EXISTS ix_repasses_snapshot_data ON bronze.repasses_snapshot (_data_snapshot);
+
+-- ===== repasses_historico_situacoes (repasses/historico/situacoes) =====
+-- Cada mudança de situação de um repasse (de -> para), com quem mexeu e quando. É a única fonte
+-- da data em que o repasse foi finalizado (a transição cujo destino é a situação de fim) e de quem
+-- movimentou cada etapa. 31.782 linhas em 06/nov/2026. `de` e `para` são ids de situação do
+-- workflow `repasses` (bronze.workflows_repasses). `idcorrespondente` vem 0 e `correspondente`
+-- vazio quando quem mexeu foi usuário interno.
+CREATE TABLE IF NOT EXISTS bronze.repasses_historico_situacoes (
+    _id_tecnico bigint GENERATED ALWAYS AS IDENTITY,
+    referencia numeric,
+    referencia_data timestamptz,
+    ativo text,
+    idhistorico numeric,
+    idrepasse numeric,
+    idusuario numeric,
+    usuario text,
+    idcorrespondente numeric,
+    correspondente text,
+    data_cad timestamptz,
+    de numeric,
+    para numeric,
+    de_nome text,
+    para_nome text,
+    _hash_linha text NOT NULL,
+    _data_extracao timestamptz NOT NULL DEFAULT now(),
+    _pagina integer,
+    CONSTRAINT pk_repasses_historico_situacoes PRIMARY KEY (_id_tecnico)
+);
+CREATE UNIQUE INDEX IF NOT EXISTS ux_repasses_historico_situacoes_chave ON bronze.repasses_historico_situacoes (idhistorico);
+CREATE TABLE IF NOT EXISTS bronze.repasses_historico_situacoes_snapshot (
+    _id_snapshot bigint GENERATED ALWAYS AS IDENTITY,
+    _data_snapshot date NOT NULL DEFAULT CURRENT_DATE,
+    referencia numeric,
+    referencia_data timestamptz,
+    ativo text,
+    idhistorico numeric,
+    idrepasse numeric,
+    idusuario numeric,
+    usuario text,
+    idcorrespondente numeric,
+    correspondente text,
+    data_cad timestamptz,
+    de numeric,
+    para numeric,
+    de_nome text,
+    para_nome text,
+    _hash_linha text,
+    _data_extracao timestamptz,
+    _pagina integer,
+    CONSTRAINT pk_repasses_historico_situacoes_snapshot PRIMARY KEY (_id_snapshot)
+);
+CREATE UNIQUE INDEX IF NOT EXISTS ux_repasses_historico_situacoes_snapshot_dia ON bronze.repasses_historico_situacoes_snapshot (_data_snapshot, idhistorico);
+CREATE INDEX IF NOT EXISTS ix_repasses_historico_situacoes_snapshot_data ON bronze.repasses_historico_situacoes_snapshot (_data_snapshot);
+
+-- ===== repasses_workflow_tempo (repasses/workflow/tempo) =====
+-- Tempo que cada repasse ficou em cada situação do workflow. Mesma forma de
+-- atendimentos_workflow_tempo: uma linha por etapa por onde o repasse passou, `tempo` é quanto ficou
+-- nela e `data_cad` é o momento em que SAIU dela. A situação atual ainda não tem linha. 31.112
+-- linhas em 06/nov/2026. `sigla` vem vazia em todas.
+CREATE TABLE IF NOT EXISTS bronze.repasses_workflow_tempo (
+    _id_tecnico bigint GENERATED ALWAYS AS IDENTITY,
+    referencia numeric,
+    referencia_data timestamptz,
+    ativo text,
+    idtempo numeric,
+    idrepasse numeric,
+    idsituacao numeric,
+    situacao text,
+    sigla text,
+    tempo numeric,
+    data_cad timestamptz,
+    _hash_linha text NOT NULL,
+    _data_extracao timestamptz NOT NULL DEFAULT now(),
+    _pagina integer,
+    CONSTRAINT pk_repasses_workflow_tempo PRIMARY KEY (_id_tecnico)
+);
+CREATE UNIQUE INDEX IF NOT EXISTS ux_repasses_workflow_tempo_chave ON bronze.repasses_workflow_tempo (idtempo);
+CREATE TABLE IF NOT EXISTS bronze.repasses_workflow_tempo_snapshot (
+    _id_snapshot bigint GENERATED ALWAYS AS IDENTITY,
+    _data_snapshot date NOT NULL DEFAULT CURRENT_DATE,
+    referencia numeric,
+    referencia_data timestamptz,
+    ativo text,
+    idtempo numeric,
+    idrepasse numeric,
+    idsituacao numeric,
+    situacao text,
+    sigla text,
+    tempo numeric,
+    data_cad timestamptz,
+    _hash_linha text,
+    _data_extracao timestamptz,
+    _pagina integer,
+    CONSTRAINT pk_repasses_workflow_tempo_snapshot PRIMARY KEY (_id_snapshot)
+);
+CREATE UNIQUE INDEX IF NOT EXISTS ux_repasses_workflow_tempo_snapshot_dia ON bronze.repasses_workflow_tempo_snapshot (_data_snapshot, idtempo);
+CREATE INDEX IF NOT EXISTS ix_repasses_workflow_tempo_snapshot_data ON bronze.repasses_workflow_tempo_snapshot (_data_snapshot);
+
+-- ===== comissoes_workflow_tempo (comissoes/workflow/tempo) =====
+-- Tempo que cada comissão ficou em cada situação do workflow `comissoes`. Mesma forma de
+-- repasses_workflow_tempo (a situação atual ainda não tem linha). 8.411 linhas em 06/nov/2026.
+CREATE TABLE IF NOT EXISTS bronze.comissoes_workflow_tempo (
+    _id_tecnico bigint GENERATED ALWAYS AS IDENTITY,
+    referencia numeric,
+    referencia_data timestamptz,
+    ativo text,
+    idcomissao numeric,
+    idsituacao numeric,
+    situacao text,
+    sigla text,
+    idtempo numeric,
+    tempo numeric,
+    data_cad timestamptz,
+    _hash_linha text NOT NULL,
+    _data_extracao timestamptz NOT NULL DEFAULT now(),
+    _pagina integer,
+    CONSTRAINT pk_comissoes_workflow_tempo PRIMARY KEY (_id_tecnico)
+);
+CREATE UNIQUE INDEX IF NOT EXISTS ux_comissoes_workflow_tempo_chave ON bronze.comissoes_workflow_tempo (idtempo);
+CREATE TABLE IF NOT EXISTS bronze.comissoes_workflow_tempo_snapshot (
+    _id_snapshot bigint GENERATED ALWAYS AS IDENTITY,
+    _data_snapshot date NOT NULL DEFAULT CURRENT_DATE,
+    referencia numeric,
+    referencia_data timestamptz,
+    ativo text,
+    idcomissao numeric,
+    idsituacao numeric,
+    situacao text,
+    sigla text,
+    idtempo numeric,
+    tempo numeric,
+    data_cad timestamptz,
+    _hash_linha text,
+    _data_extracao timestamptz,
+    _pagina integer,
+    CONSTRAINT pk_comissoes_workflow_tempo_snapshot PRIMARY KEY (_id_snapshot)
+);
+CREATE UNIQUE INDEX IF NOT EXISTS ux_comissoes_workflow_tempo_snapshot_dia ON bronze.comissoes_workflow_tempo_snapshot (_data_snapshot, idtempo);
+CREATE INDEX IF NOT EXISTS ix_comissoes_workflow_tempo_snapshot_data ON bronze.comissoes_workflow_tempo_snapshot (_data_snapshot);
+
+-- ===== reservas_comissoes_programacao (reservas/comissoes/programacao) =====
+-- Programação (cronograma previsto) da comissão na reserva: uma linha por parcela prevista de cada
+-- regra de comissão (bronze.reservas_comissoes). `data_previsao` é quando a parcela deve sair e
+-- `valor` é o valor previsto. Cobre a reserva desde a venda, antes de a comissão existir como
+-- registro em bronze.comissoes. 18.129 linhas em 06/nov/2026. Os campos *_lancamento (integração
+-- com o financeiro) vêm vazios em todas as linhas. `referencia` repete (é igual a
+-- idcondicoes_parcelas), por isso a chave do upsert é idprogramacao.
+CREATE TABLE IF NOT EXISTS bronze.reservas_comissoes_programacao (
+    _id_tecnico bigint GENERATED ALWAYS AS IDENTITY,
+    referencia numeric,
+    referencia_data timestamptz,
+    ativo text,
+    idprogramacao numeric,
+    idreserva numeric,
+    idreservascondicoes numeric,
+    idcondicoes_parcelas numeric,
+    idregra numeric,
+    contrato text,
+    parcela numeric,
+    para text,
+    quem numeric,
+    valor numeric,
+    data_previsao date,
+    data_previsao_pagadoria date,
+    forma_pagamento text,
+    idgestaocontrato_lancamento text,
+    idreserva_comissao_parcela_lancamento text,
+    idlancamento text,
+    idprogramacao_lancamento text,
+    data_cad timestamptz,
+    _hash_linha text NOT NULL,
+    _data_extracao timestamptz NOT NULL DEFAULT now(),
+    _pagina integer,
+    CONSTRAINT pk_reservas_comissoes_programacao PRIMARY KEY (_id_tecnico)
+);
+CREATE UNIQUE INDEX IF NOT EXISTS ux_reservas_comissoes_programacao_chave ON bronze.reservas_comissoes_programacao (idprogramacao);
+CREATE TABLE IF NOT EXISTS bronze.reservas_comissoes_programacao_snapshot (
+    _id_snapshot bigint GENERATED ALWAYS AS IDENTITY,
+    _data_snapshot date NOT NULL DEFAULT CURRENT_DATE,
+    referencia numeric,
+    referencia_data timestamptz,
+    ativo text,
+    idprogramacao numeric,
+    idreserva numeric,
+    idreservascondicoes numeric,
+    idcondicoes_parcelas numeric,
+    idregra numeric,
+    contrato text,
+    parcela numeric,
+    para text,
+    quem numeric,
+    valor numeric,
+    data_previsao date,
+    data_previsao_pagadoria date,
+    forma_pagamento text,
+    idgestaocontrato_lancamento text,
+    idreserva_comissao_parcela_lancamento text,
+    idlancamento text,
+    idprogramacao_lancamento text,
+    data_cad timestamptz,
+    _hash_linha text,
+    _data_extracao timestamptz,
+    _pagina integer,
+    CONSTRAINT pk_reservas_comissoes_programacao_snapshot PRIMARY KEY (_id_snapshot)
+);
+CREATE UNIQUE INDEX IF NOT EXISTS ux_reservas_comissoes_programacao_snapshot_dia ON bronze.reservas_comissoes_programacao_snapshot (_data_snapshot, idprogramacao);
+CREATE INDEX IF NOT EXISTS ix_reservas_comissoes_programacao_snapshot_data ON bronze.reservas_comissoes_programacao_snapshot (_data_snapshot);
+
+-- ===== workflows_repasses (workflows/repasses) =====
+-- Definição do workflow de repasses (GET /api/v1/configuracoes/workflows/repasses, fora do
+-- prefixo /cvdw, por isso o campo `base` no config/objetos.yml). 35 situações em 06/nov/2026, com a
+-- `ordem` do fluxo e as flags `inicio`, `fim`, `cancelado`, `distrato` e `cessao` (S/N) dentro de
+-- `flags`. É ela que diz quais situações encerram o repasse, sem adivinhar pelo nome.
+-- A lista não é paginada e vem como array no topo do JSON.
+CREATE TABLE IF NOT EXISTS bronze.workflows_repasses (
+    _id_tecnico bigint GENERATED ALWAYS AS IDENTITY,
+    ordem numeric,
+    idsituacao numeric,
+    nome text,
+    cor_bg text,
+    cor_nome text,
+    grupos jsonb,
+    flags jsonb,
+    _hash_linha text NOT NULL,
+    _data_extracao timestamptz NOT NULL DEFAULT now(),
+    _pagina integer,
+    CONSTRAINT pk_workflows_repasses PRIMARY KEY (_id_tecnico)
+);
+CREATE UNIQUE INDEX IF NOT EXISTS ux_workflows_repasses_chave ON bronze.workflows_repasses (idsituacao);
+CREATE TABLE IF NOT EXISTS bronze.workflows_repasses_snapshot (
+    _id_snapshot bigint GENERATED ALWAYS AS IDENTITY,
+    _data_snapshot date NOT NULL DEFAULT CURRENT_DATE,
+    ordem numeric,
+    idsituacao numeric,
+    nome text,
+    cor_bg text,
+    cor_nome text,
+    grupos jsonb,
+    flags jsonb,
+    _hash_linha text,
+    _data_extracao timestamptz,
+    _pagina integer,
+    CONSTRAINT pk_workflows_repasses_snapshot PRIMARY KEY (_id_snapshot)
+);
+CREATE UNIQUE INDEX IF NOT EXISTS ux_workflows_repasses_snapshot_dia ON bronze.workflows_repasses_snapshot (_data_snapshot, idsituacao);
+CREATE INDEX IF NOT EXISTS ix_workflows_repasses_snapshot_data ON bronze.workflows_repasses_snapshot (_data_snapshot);
+
+-- ===== workflows_comissoes (workflows/comissoes) =====
+-- Definição do workflow de comissões (/api/v1/configuracoes/workflows/comissoes). 7 situações em
+-- 06/nov/2026. As flags chamam o cancelamento de `cancelada` (no feminino), diferente do
+-- workflow de repasses.
+CREATE TABLE IF NOT EXISTS bronze.workflows_comissoes (
+    _id_tecnico bigint GENERATED ALWAYS AS IDENTITY,
+    ordem numeric,
+    idsituacao numeric,
+    nome text,
+    cor_bg text,
+    cor_nome text,
+    grupos jsonb,
+    flags jsonb,
+    _hash_linha text NOT NULL,
+    _data_extracao timestamptz NOT NULL DEFAULT now(),
+    _pagina integer,
+    CONSTRAINT pk_workflows_comissoes PRIMARY KEY (_id_tecnico)
+);
+CREATE UNIQUE INDEX IF NOT EXISTS ux_workflows_comissoes_chave ON bronze.workflows_comissoes (idsituacao);
+CREATE TABLE IF NOT EXISTS bronze.workflows_comissoes_snapshot (
+    _id_snapshot bigint GENERATED ALWAYS AS IDENTITY,
+    _data_snapshot date NOT NULL DEFAULT CURRENT_DATE,
+    ordem numeric,
+    idsituacao numeric,
+    nome text,
+    cor_bg text,
+    cor_nome text,
+    grupos jsonb,
+    flags jsonb,
+    _hash_linha text,
+    _data_extracao timestamptz,
+    _pagina integer,
+    CONSTRAINT pk_workflows_comissoes_snapshot PRIMARY KEY (_id_snapshot)
+);
+CREATE UNIQUE INDEX IF NOT EXISTS ux_workflows_comissoes_snapshot_dia ON bronze.workflows_comissoes_snapshot (_data_snapshot, idsituacao);
+CREATE INDEX IF NOT EXISTS ix_workflows_comissoes_snapshot_data ON bronze.workflows_comissoes_snapshot (_data_snapshot);
+
+-- ===== workflows_comissoes_pagamentos (workflows/situacao_pagamento_comissao) =====
+-- Definição do workflow dos PAGAMENTOS de comissão (/api/v1/configuracoes/workflows/
+-- situacao_pagamento_comissao). 11 situações em 06/nov/2026, entre elas PAGO (fim) e Cancelado.
+CREATE TABLE IF NOT EXISTS bronze.workflows_comissoes_pagamentos (
+    _id_tecnico bigint GENERATED ALWAYS AS IDENTITY,
+    ordem numeric,
+    idsituacao numeric,
+    nome text,
+    cor_bg text,
+    cor_nome text,
+    grupos jsonb,
+    flags jsonb,
+    _hash_linha text NOT NULL,
+    _data_extracao timestamptz NOT NULL DEFAULT now(),
+    _pagina integer,
+    CONSTRAINT pk_workflows_comissoes_pagamentos PRIMARY KEY (_id_tecnico)
+);
+CREATE UNIQUE INDEX IF NOT EXISTS ux_workflows_comissoes_pagamentos_chave ON bronze.workflows_comissoes_pagamentos (idsituacao);
+CREATE TABLE IF NOT EXISTS bronze.workflows_comissoes_pagamentos_snapshot (
+    _id_snapshot bigint GENERATED ALWAYS AS IDENTITY,
+    _data_snapshot date NOT NULL DEFAULT CURRENT_DATE,
+    ordem numeric,
+    idsituacao numeric,
+    nome text,
+    cor_bg text,
+    cor_nome text,
+    grupos jsonb,
+    flags jsonb,
+    _hash_linha text,
+    _data_extracao timestamptz,
+    _pagina integer,
+    CONSTRAINT pk_workflows_comissoes_pagamentos_snapshot PRIMARY KEY (_id_snapshot)
+);
+CREATE UNIQUE INDEX IF NOT EXISTS ux_workflows_comissoes_pagamentos_snapshot_dia ON bronze.workflows_comissoes_pagamentos_snapshot (_data_snapshot, idsituacao);
+CREATE INDEX IF NOT EXISTS ix_workflows_comissoes_pagamentos_snapshot_data ON bronze.workflows_comissoes_pagamentos_snapshot (_data_snapshot);

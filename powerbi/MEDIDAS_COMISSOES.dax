@@ -1,0 +1,761 @@
+// =============================================================================
+// Medidas DAX do módulo COMISSÃO (nov/2026), sobre gold.fato_comissoes, gold.fato_comissoes_
+// pagamentos, gold.fato_comissoes_programacao e gold.fato_comissoes_regras, com as dimensões
+// gold.dim_comissao_situacao e gold.dim_imobiliaria, mais dim_calendario e dim_empreendimento, que
+// já existem no modelo. O roteiro de montagem da página está em PAGINA_COMISSOES.md, e a análise
+// por trás dos números em docs/comissoes-e-repasses.md.
+//
+// O QUE É A COMISSÃO NO CVCRM. A reserva tem REGRAS de comissão (quem recebe, quanto, de que tipo).
+// Quando a venda acontece o CVCRM gera a COMISSÃO (o total devido), que percorre um workflow de sete
+// situações, e os PAGAMENTOS dela (as parcelas, com vencimento). O CRONOGRAMA previsto é a programação
+// de cada regra, desde a venda. Se as regras mudam, o CVCRM cancela a comissão e gera outra.
+//
+// Relacionamentos que estas medidas assumem (ver PAGINA_COMISSOES.md, seção 0). Cada fato liga
+// direto nas dimensões, e os fatos NÃO se ligam entre si (desenho galaxy):
+//   dim_calendario[data]                  1─* fato_comissoes[data_venda]               (ATIVO)
+//   dim_calendario[data]                  1─* fato_comissoes[data_cad]                 (INATIVO)
+//   dim_calendario[data]                  1─* fato_comissoes[data_finalizacao]         (INATIVO)
+//   dim_calendario[data]                  1─* fato_comissoes_pagamentos[vencimento]    (ATIVO)
+//   dim_calendario[data]                  1─* fato_comissoes_programacao[data_previsao](ATIVO)
+//   dim_calendario[data]                  1─* fato_comissoes_regras[data_venda]        (ATIVO)
+//   dim_empreendimento[id_empreendimento] 1─* cada um dos quatro fatos (id_empreendimento)
+//   dim_imobiliaria[imobiliaria]          1─* cada um dos quatro fatos (imobiliaria)
+//   dim_comissao_situacao[id_situacao]    1─* fato_comissoes[id_situacao]
+//   dim_corretor_headcount[corretor_chave]1─* fato_comissoes[corretor_chave] (opcional)
+//
+// TRÊS COISAS QUE MUDAM A LEITURA (conferidas na produção em 06/nov/2026):
+//  1. FINALIZADA NÃO É PAGA. A comissão finaliza quando o processo dela fecha, e os pagamentos seguem
+//     o cronograma (vencimentos até 2028). Nenhum pagamento está na situação PAGO no CVCRM, então a
+//     data efetiva de pagamento não existe nos dados. O que a página mostra é o que foi devido e o que
+//     está programado, nunca "pago".
+//  2. COMISSÃO DE VALOR ZERO É CASCA. 1.503 das 3.891 comissões têm valor zero, criadas na venda sem
+//     regra apurada (quase todas de 2023 e 2024). Elas não entram em contagem nem em %. Quem soma
+//     comissão sem olhar isso conta errado.
+//  3. CANCELADA PESA. 34% do valor gerado (R$ 10,3 mi de R$ 30,7 mi) foi cancelado: quase tudo é
+//     distrato (812 de 813) e comissão refeita depois de mudar a regra. Por isso "devida" exclui as
+//     canceladas e há um cartão com o que ainda vive em reserva que não virou venda.
+//
+// Convenção de cor dos cartões (a das outras páginas): azul é medida do período, cinza é a foto de
+// hoje (ignora o filtro de período) e vermelho é o que dói.
+// =============================================================================
+
+
+// ---- Comissão do período (data da venda, relacionamento ativo) ----
+
+// valor_devido é o valor da comissão não cancelada (a cancelada vale zero nessa coluna).
+Comissão Devida =
+SUM ( fato_comissoes[valor_devido] )
+
+Qtd Comissões Devidas =
+CALCULATE ( COUNTROWS ( fato_comissoes ), fato_comissoes[eh_comissao_devida] = TRUE () )
+
+// O VGV entra uma vez por comissão devida: nenhuma reserva tem mais de uma (1.581 reservas, uma
+// comissão devida cada), então a soma não dobra.
+VGV Das Comissões Devidas =
+CALCULATE ( SUM ( fato_comissoes[valor_contrato] ), fato_comissoes[eh_comissao_devida] = TRUE () )
+
+// Custo da comissão sobre o VGV vendido. Em 06/nov/2026: 4,5% na House e 5,2% em Parcerias.
+% Comissão Efetiva =
+DIVIDE ( [Comissão Devida], [VGV Das Comissões Devidas] )
+
+Comissão Finalizada =
+CALCULATE ( SUM ( fato_comissoes[valor_devido] ), fato_comissoes[eh_finalizada] = TRUE () )
+
+Qtd Comissões Finalizadas =
+CALCULATE ( COUNTROWS ( fato_comissoes ), fato_comissoes[eh_finalizada] = TRUE (), fato_comissoes[eh_valor_zero] = FALSE () )
+
+// Valor das comissões canceladas (o valor_comissao delas, que em valor_devido vira zero).
+Comissão Cancelada =
+CALCULATE ( SUM ( fato_comissoes[valor_comissao] ), fato_comissoes[eh_cancelada] = TRUE () )
+
+// Quanto do que foi gerado acabou cancelado: cancelada dividida por (devida + cancelada).
+% Cancelado Do Gerado =
+DIVIDE ( [Comissão Cancelada], [Comissão Devida] + [Comissão Cancelada] )
+
+// As cascas: valor zero e não canceladas (a maioria "Aguardando Apuração").
+Comissões Sem Valor Apurado =
+CALCULATE ( COUNTROWS ( fato_comissoes ), fato_comissoes[eh_valor_zero] = TRUE (), fato_comissoes[eh_cancelada] = FALSE () )
+
+
+// ---- Foto de hoje (ignoram o filtro de período: REMOVEFILTERS no calendário) ----
+// Comissão em aberto não tem data de fim, então filtrar por período zeraria o cartão. Seguem valendo
+// os filtros de imobiliária, empreendimento e situação.
+
+Comissão Em Aberto Hoje =
+CALCULATE ( SUM ( fato_comissoes[valor_devido] ), fato_comissoes[eh_em_aberto] = TRUE (), REMOVEFILTERS ( dim_calendario ) )
+
+Qtd Comissões Em Aberto Hoje =
+CALCULATE ( COUNTROWS ( fato_comissoes ), fato_comissoes[eh_em_aberto] = TRUE (), REMOVEFILTERS ( dim_calendario ) )
+
+// Esperando a nota fiscal: "Aguardando NF" e as de corretor desligado. A mediana de dias é a de
+// quanto tempo estão paradas (em 06/nov/2026: 826 e 402 dias de mediana).
+Comissão Com NF Pendente =
+CALCULATE (
+    SUM ( fato_comissoes[valor_devido] ),
+    fato_comissoes[eh_em_aberto] = TRUE (),
+    fato_comissoes[grupo_situacao] IN { "2. Aguardando NF", "3. Desligamento, NF pendente" },
+    REMOVEFILTERS ( dim_calendario )
+)
+
+Qtd Comissões Com NF Pendente =
+CALCULATE (
+    COUNTROWS ( fato_comissoes ),
+    fato_comissoes[eh_em_aberto] = TRUE (),
+    fato_comissoes[grupo_situacao] IN { "2. Aguardando NF", "3. Desligamento, NF pendente" },
+    REMOVEFILTERS ( dim_calendario )
+)
+
+Dias Mediana NF Pendente =
+CALCULATE (
+    MEDIAN ( fato_comissoes[dias_na_situacao] ),
+    fato_comissoes[eh_em_aberto] = TRUE (),
+    fato_comissoes[grupo_situacao] IN { "2. Aguardando NF", "3. Desligamento, NF pendente" },
+    REMOVEFILTERS ( dim_calendario )
+)
+
+// Comissão que segue viva (não cancelada, com valor) numa reserva que virou distrato, cancelamento
+// ou venceu. O CVCRM cancela quase todas sozinho quando há distrato; as que sobram precisam de
+// limpeza. Em 06/nov/2026: 135 comissões, R$ 1,84 mi (100 delas em apuração, numa reserva cancelada).
+Comissão Viva Em Reserva Sem Venda =
+CALCULATE ( SUM ( fato_comissoes[valor_devido] ), fato_comissoes[eh_viva_em_reserva_sem_venda] = TRUE (), REMOVEFILTERS ( dim_calendario ) )
+
+Qtd Comissões Vivas Em Reserva Sem Venda =
+CALCULATE ( COUNTROWS ( fato_comissoes ), fato_comissoes[eh_viva_em_reserva_sem_venda] = TRUE (), REMOVEFILTERS ( dim_calendario ) )
+
+
+// ---- Cronograma e pagamentos (o que está programado, não o que foi pago) ----
+// O cronograma (fato_comissoes_programacao) cobre a reserva desde a venda e por isso é a base da
+// previsão de caixa; só entram as de reserva vendida (eh_reserva_viva). Os pagamentos (fato_comissoes_
+// pagamentos) são as parcelas já geradas: cobrem cerca de 60% do cronograma, porque comissão sem
+// apuração ainda não tem pagamento.
+
+Previsto Cronograma =
+CALCULATE ( SUM ( fato_comissoes_programacao[valor] ), fato_comissoes_programacao[eh_reserva_viva] = TRUE () )
+
+Previsto A Vencer Em 12 Meses =
+CALCULATE (
+    [Previsto Cronograma],
+    fato_comissoes_programacao[dias_para_previsao] >= 0,
+    fato_comissoes_programacao[dias_para_previsao] <= 365,
+    REMOVEFILTERS ( dim_calendario )
+)
+
+Previsto A Vencer Em 30 Dias =
+CALCULATE (
+    [Previsto Cronograma],
+    fato_comissoes_programacao[dias_para_previsao] >= 0,
+    fato_comissoes_programacao[dias_para_previsao] <= 30,
+    REMOVEFILTERS ( dim_calendario )
+)
+
+// Parcelas cujo vencimento já passou. O CVCRM não diz se foram pagas (ver o aviso 1).
+Previsto Que Já Venceu =
+CALCULATE ( [Previsto Cronograma], fato_comissoes_programacao[dias_para_previsao] < 0, REMOVEFILTERS ( dim_calendario ) )
+
+// Pagamentos que ainda são compromisso: não cancelados, de comissão não cancelada e de reserva
+// vendida (fato_comissoes_pagamentos[eh_obrigacao]).
+Pagamentos Obrigações =
+CALCULATE ( SUM ( fato_comissoes_pagamentos[valor] ), fato_comissoes_pagamentos[eh_obrigacao] = TRUE () )
+
+
+// ---- Estrutura: quem recebe a comissão (fato_comissoes_regras) ----
+// Só as regras ativas de reservas vendidas (o CVCRM guarda as versões antigas como inativas).
+
+Regra Valor =
+CALCULATE ( SUM ( fato_comissoes_regras[valor] ), fato_comissoes_regras[eh_ativa] = TRUE (), fato_comissoes_regras[eh_reserva_viva] = TRUE () )
+
+// VGV de cada reserva uma vez só (a regra repete o contrato da reserva em cada linha).
+VGV Das Reservas Com Regra =
+CALCULATE (
+    SUMX ( VALUES ( fato_comissoes_regras[id_reserva] ), CALCULATE ( MAX ( fato_comissoes_regras[valor_contrato_reserva] ) ) ),
+    fato_comissoes_regras[eh_ativa] = TRUE (),
+    fato_comissoes_regras[eh_reserva_viva] = TRUE ()
+)
+
+Regra % Do Contrato =
+DIVIDE ( [Regra Valor], [VGV Das Reservas Com Regra] )
+
+
+// =============================================================================
+// HTML/CSS: mesma linguagem visual das páginas de Telefonia, Atendimento (CVCRM) e Repasses: fonte
+// Segoe UI, azul #003254, cantos de 12 a 20 px, cartão cinza para foto de hoje, cartão vermelho para o
+// que dói. O visual é o HTML Content (AppSource). Ele NÃO executa JavaScript: movimento e interação
+// vêm de CSS puro (barras que crescem, destaque ao passar o mouse) e do clique que filtra a página
+// nas tabelas com Granularity. Todo o tamanho está pensado para o canvas de 4500 x 3800.
+// =============================================================================
+
+
+// ---- 1. Faixa de KPIs ----
+// Visual: HTML Content. Campo Values: [KPIs Comissões HTML]. Nove cartões. Rótulo de até 15
+// caracteres e subtítulo de até 23, numa linha só.
+KPIs Comissões HTML =
+
+VAR _dev    = COALESCE ( [Comissão Devida], 0 )
+VAR _qDev   = COALESCE ( [Qtd Comissões Devidas], 0 )
+VAR _pct    = [% Comissão Efetiva]
+VAR _fin    = COALESCE ( [Comissão Finalizada], 0 )
+VAR _qFin   = COALESCE ( [Qtd Comissões Finalizadas], 0 )
+VAR _abr    = COALESCE ( [Comissão Em Aberto Hoje], 0 )
+VAR _qAbr   = COALESCE ( [Qtd Comissões Em Aberto Hoje], 0 )
+VAR _can    = COALESCE ( [Comissão Cancelada], 0 )
+VAR _pCan   = [% Cancelado Do Gerado]
+VAR _nf     = COALESCE ( [Comissão Com NF Pendente], 0 )
+VAR _qNf    = COALESCE ( [Qtd Comissões Com NF Pendente], 0 )
+VAR _viva   = COALESCE ( [Comissão Viva Em Reserva Sem Venda], 0 )
+VAR _qViva  = COALESCE ( [Qtd Comissões Vivas Em Reserva Sem Venda], 0 )
+VAR _v12    = COALESCE ( [Previsto A Vencer Em 12 Meses], 0 )
+VAR _v30    = COALESCE ( [Previsto A Vencer Em 30 Dias], 0 )
+
+// FORMAT() de número em branco devolve "" e não BLANK(): o ISBLANK vem antes do FORMAT.
+VAR _tPct   = IF ( ISBLANK ( _pct ), "--", FORMAT ( _pct, "0.0%" ) )
+VAR _tPCan  = IF ( ISBLANK ( _pCan ), "--", FORMAT ( _pCan, "0%" ) )
+VAR _tDev   = "R$ " & IF ( _dev  >= 1000000, FORMAT ( _dev  / 1000000, "#,0.0" ) & " mi", FORMAT ( _dev  / 1000, "#,0" ) & " mil" )
+VAR _tFin   = "R$ " & IF ( _fin  >= 1000000, FORMAT ( _fin  / 1000000, "#,0.0" ) & " mi", FORMAT ( _fin  / 1000, "#,0" ) & " mil" )
+VAR _tAbr   = "R$ " & IF ( _abr  >= 1000000, FORMAT ( _abr  / 1000000, "#,0.0" ) & " mi", FORMAT ( _abr  / 1000, "#,0" ) & " mil" )
+VAR _tCan   = "R$ " & IF ( _can  >= 1000000, FORMAT ( _can  / 1000000, "#,0.0" ) & " mi", FORMAT ( _can  / 1000, "#,0" ) & " mil" )
+VAR _tNf    = "R$ " & IF ( _nf   >= 1000000, FORMAT ( _nf   / 1000000, "#,0.0" ) & " mi", FORMAT ( _nf   / 1000, "#,0" ) & " mil" )
+VAR _tViva  = "R$ " & IF ( _viva >= 1000000, FORMAT ( _viva / 1000000, "#,0.0" ) & " mi", FORMAT ( _viva / 1000, "#,0" ) & " mil" )
+VAR _t12    = "R$ " & IF ( _v12  >= 1000000, FORMAT ( _v12  / 1000000, "#,0.0" ) & " mi", FORMAT ( _v12  / 1000, "#,0" ) & " mil" )
+VAR _t30    = "R$ " & IF ( _v30  >= 1000000, FORMAT ( _v30  / 1000000, "#,0.0" ) & " mi", FORMAT ( _v30  / 1000, "#,0" ) & " mil" )
+
+VAR _icoMoeda  = "<svg viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><line x1='12' y1='1' x2='12' y2='23'></line><path d='M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6'></path></svg>"
+VAR _icoPct    = "<svg viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><line x1='19' y1='5' x2='5' y2='19'></line><circle cx='6.5' cy='6.5' r='2.5'></circle><circle cx='17.5' cy='17.5' r='2.5'></circle></svg>"
+VAR _icoCheck  = "<svg viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M22 11.08V12a10 10 0 1 1-5.93-9.14'></path><polyline points='22 4 12 14.01 9 11.01'></polyline></svg>"
+VAR _icoRelogio = "<svg viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><circle cx='12' cy='12' r='10'></circle><polyline points='12 6 12 12 16 14'></polyline></svg>"
+VAR _icoX      = "<svg viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><circle cx='12' cy='12' r='10'></circle><line x1='15' y1='9' x2='9' y2='15'></line><line x1='9' y1='9' x2='15' y2='15'></line></svg>"
+VAR _icoDoc    = "<svg viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z'></path><polyline points='14 2 14 8 20 8'></polyline><line x1='16' y1='13' x2='8' y2='13'></line><line x1='16' y1='17' x2='8' y2='17'></line></svg>"
+VAR _icoAlerta = "<svg viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z'></path><line x1='12' y1='9' x2='12' y2='13'></line><line x1='12' y1='17' x2='12.01' y2='17'></line></svg>"
+VAR _icoCal    = "<svg viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><rect x='3' y='4' width='18' height='18' rx='2' ry='2'></rect><line x1='16' y1='2' x2='16' y2='6'></line><line x1='8' y1='2' x2='8' y2='6'></line><line x1='3' y1='10' x2='21' y2='10'></line></svg>"
+
+VAR _css =
+    "<style>" &
+    "html,body{margin:0;padding:0;height:100%;}" &
+    ".k{font-family:'Segoe UI Semibold','Segoe UI',Arial,sans-serif;font-weight:600;display:flex;flex-direction:row;gap:18px;width:100%;height:100%;box-sizing:border-box;}" &
+    ".k .c{position:relative;overflow:hidden;flex:1 1 0;min-width:0;background:#003254;color:#fff;border-radius:20px;padding:24px 28px;box-sizing:border-box;}" &
+    ".k .c.g{background:#6B7280;}" &
+    ".k .c.r{background:#8A1C1C;}" &
+    ".k .ic{position:absolute;top:18px;right:22px;width:50px;height:50px;background:rgba(255,255,255,.15);border-radius:14px;display:flex;align-items:center;justify-content:center;}" &
+    ".k .ic svg{width:28px;height:28px;color:#fff;opacity:.95;}" &
+    ".k .l{font-size:26px;letter-spacing:.02em;opacity:.9;padding-right:64px;box-sizing:border-box;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}" &
+    ".k .v{font-size:56px;margin-top:10px;line-height:1;white-space:nowrap;}" &
+    ".k .s{font-size:24px;opacity:.85;margin-top:8px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}" &
+    "</style>"
+
+RETURN
+    _css &
+    "<div class='k'>" &
+        "<div class='c' title='Soma das comissões não canceladas das vendas do período. Não é o que foi pago: o CVCRM não registra pagamento efetivo.'><div class='ic'>" & _icoMoeda & "</div><div class='l'>COMISSÃO DEVIDA</div><div class='v'>" &
+            _tDev & "</div><div class='s'>" & FORMAT ( _qDev, "#,0" ) & " comissões</div></div>" &
+
+        "<div class='c' title='Comissão devida dividida pelo VGV das vendas que a geraram.'><div class='ic'>" & _icoPct & "</div><div class='l'>% EFETIVO</div><div class='v'>" &
+            _tPct & "</div><div class='s'>sobre o VGV vendido</div></div>" &
+
+        "<div class='c' title='Comissões que chegaram a Finalizado. Finalizada não é paga: os pagamentos seguem o cronograma.'><div class='ic'>" & _icoCheck & "</div><div class='l'>FINALIZADAS</div><div class='v'>" &
+            _tFin & "</div><div class='s'>" & FORMAT ( _qFin, "#,0" ) & " comissões</div></div>" &
+
+        "<div class='c g' title='Foto de hoje. Em apuração, esperando nota fiscal ou NF lançada, e ainda não finalizadas nem canceladas.'><div class='ic'>" & _icoRelogio & "</div><div class='l'>EM ABERTO</div><div class='v'>" &
+            _tAbr & "</div><div class='s'>" & FORMAT ( _qAbr, "#,0" ) & " comissões</div></div>" &
+
+        "<div class='c g' title='Comissões canceladas: distrato e comissão refeita depois de mudar a regra.'><div class='ic'>" & _icoX & "</div><div class='l'>CANCELADAS</div><div class='v'>" &
+            _tCan & "</div><div class='s'>" & _tPCan & " do gerado</div></div>" &
+
+        "<div class='c r' title='Foto de hoje. Comissões esperando a nota fiscal do corretor ou da imobiliária, inclusive de corretor desligado.'><div class='ic'>" & _icoDoc & "</div><div class='l'>NF PENDENTE</div><div class='v'>" &
+            _tNf & "</div><div class='s'>" & FORMAT ( _qNf, "#,0" ) & " comissões</div></div>" &
+
+        "<div class='c r' title='Foto de hoje. Comissão que não está cancelada, mas é de uma reserva que virou distrato, foi cancelada ou venceu.'><div class='ic'>" & _icoAlerta & "</div><div class='l'>VIVAS S/ VENDA</div><div class='v'>" &
+            _tViva & "</div><div class='s'>" & FORMAT ( _qViva, "#,0" ) & " em reserva sem venda</div></div>" &
+
+        "<div class='c' title='Foto de hoje. Cronograma de comissão das reservas vendidas que vence nos próximos 12 meses.'><div class='ic'>" & _icoCal & "</div><div class='l'>VENCE 12 MESES</div><div class='v'>" &
+            _t12 & "</div><div class='s'>cronograma previsto</div></div>" &
+
+        "<div class='c' title='Foto de hoje. Cronograma de comissão das reservas vendidas que vence nos próximos 30 dias.'><div class='ic'>" & _icoCal & "</div><div class='l'>VENCE 30 DIAS</div><div class='v'>" &
+            _t30 & "</div><div class='s'>cronograma previsto</div></div>" &
+    "</div>"
+
+
+// ---- 2. Funil: em que situação está a comissão ----
+// Visual: HTML Content. Campo Values: [Funil Comissões HTML]. As seis situações do workflow, na
+// ordem do processo, com quantidade, valor e (para as que ainda andam) há quantos dias estão na
+// situação, em mediana. Segue o filtro de período (data da venda). Conta só comissão com valor: as
+// cascas de valor zero aparecem numa nota ao final.
+// Cores: vermelho é o que está esperando nota fiscal, verde é finalizada, cinza é cancelada.
+Funil Comissões HTML =
+
+VAR _grupos =
+    SUMMARIZE ( dim_comissao_situacao, dim_comissao_situacao[grupo_ordem], dim_comissao_situacao[grupo] )
+VAR _max = MAXX ( _grupos, CALCULATE ( SUM ( fato_comissoes[valor_comissao] ), fato_comissoes[eh_valor_zero] = FALSE () ) )
+
+VAR _linhas =
+    CONCATENATEX (
+        _grupos,
+        VAR _n   = COALESCE ( CALCULATE ( COUNTROWS ( fato_comissoes ), fato_comissoes[eh_valor_zero] = FALSE () ), 0 )
+        VAR _v   = COALESCE ( CALCULATE ( SUM ( fato_comissoes[valor_comissao] ), fato_comissoes[eh_valor_zero] = FALSE () ), 0 )
+        VAR _d   = CALCULATE ( MEDIAN ( fato_comissoes[dias_na_situacao] ) )
+        VAR _w   = FORMAT ( DIVIDE ( _v, _max ) * 100, "0" )
+        VAR _tV  = "R$ " & IF ( _v >= 1000000, FORMAT ( _v / 1000000, "#,0.0" ) & " mi", FORMAT ( _v / 1000, "#,0" ) & " mil" )
+        VAR _tD  = IF ( ISBLANK ( _d ), "--", FORMAT ( _d, "#,0" ) & " d" )
+        VAR _o   = dim_comissao_situacao[grupo_ordem]
+        VAR _cor = SWITCH ( _o, 2, "a", 3, "a", 5, "v", 6, "c", "" )
+        RETURN
+            "<div class='r" & IF ( _n = 0, " z", "" ) & "'>"
+                & "<div class='lb'>" & MID ( dim_comissao_situacao[grupo], 4, 60 ) & "</div>"
+                & "<div class='ba'><i class='" & _cor & "' style='width:" & _w & "%'></i></div>"
+                & "<div class='nu'>" & FORMAT ( _n, "#,0" ) & "</div>"
+                & "<div class='nu'>" & _tV & "</div>"
+                & "<div class='nu s'>" & _tD & "</div></div>",
+        "",
+        dim_comissao_situacao[grupo_ordem], ASC
+    )
+
+VAR _cascas = COALESCE ( [Comissões Sem Valor Apurado], 0 )
+
+VAR _css =
+    "<style>" &
+    "html,body{margin:0;padding:0;height:100%;background:#fff;}" &
+    ".f{font-family:'Segoe UI Semibold','Segoe UI',Arial,sans-serif;font-weight:600;color:#1F2937;box-sizing:border-box;padding:24px 30px;height:100%;overflow:hidden;}" &
+    ".f *{box-sizing:border-box;}" &
+    ".f .ti{font-size:40px;color:#003254;line-height:1.1;}" &
+    ".f .su{font-size:26px;color:#6B7280;margin:4px 0 18px;}" &
+    ".f .hd,.f .r{display:grid;grid-template-columns:minmax(520px,2fr) 3fr 130px 230px 230px;align-items:center;gap:16px;}" &
+    ".f .hd{font-size:22px;letter-spacing:.04em;color:#6B7280;padding:0 0 8px;border-bottom:2px solid #E5E7EB;}" &
+    ".f .hd span:nth-child(n+3){text-align:right;}" &
+    ".f .r{font-size:32px;padding:12px 0;border-bottom:1px solid #E5E7EB;}" &
+    ".f .r.z{opacity:.4;}" &
+    ".f .lb{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}" &
+    ".f .ba{height:30px;border-radius:15px;background:#E5E7EB;overflow:hidden;}" &
+    ".f .ba i{display:block;height:100%;border-radius:15px;background:#003254;animation:g .8s ease-out both;}" &
+    ".f .ba i.a{background:#8A1C1C;}" &
+    ".f .ba i.v{background:#1B6B3A;}" &
+    ".f .ba i.c{background:#6B7280;}" &
+    ".f .nu{text-align:right;white-space:nowrap;}" &
+    ".f .nu.s{color:#6B7280;}" &
+    ".f .ft{margin-top:14px;font-size:24px;color:#6B7280;line-height:1.35;font-weight:400;}" &
+    "@keyframes g{from{width:0}}" &
+    "</style>"
+
+RETURN
+    _css &
+    "<div class='f'>" &
+        "<div class='ti'>Em que situação estão as comissões</div>" &
+        "<div class='su'>comissões com valor, das vendas do período</div>" &
+        "<div class='hd'><span>SITUAÇÃO</span><span></span><span>COMISSÕES</span><span>VALOR</span><span>NA SITUAÇÃO (MEDIANA)</span></div>" &
+        _linhas &
+        "<div class='ft'>Finalizada não é paga: os pagamentos seguem o cronograma. Vermelho é o que espera a nota fiscal. Não entram " & FORMAT ( _cascas, "#,0" ) & " comissões de valor zero (cascas criadas na venda, sem regra apurada).</div>" &
+    "</div>"
+
+
+// ---- 3. Fluxo de desembolso: o cronograma dos próximos 18 meses ----
+// Visual: HTML Content. Campo Values: [Fluxo Desembolso Comissões HTML]. O que as reservas vendidas
+// prometem pagar de comissão, mês a mês, a partir deste mês (cronograma de fato_comissoes_programacao).
+// À esquerda, o que já venceu (o CVCRM não diz se foi pago); à direita, o que vence depois da janela.
+// Ignora o filtro de período, e seguem valendo os de imobiliária e empreendimento. Em 06/nov/2026 o
+// pico é agosto de 2027 (R$ 3,0 mi em 518 parcelas), que são as parcelas ligadas à entrega.
+Fluxo Desembolso Comissões HTML =
+
+VAR _mesAtual = FORMAT ( TODAY (), "YYYY-MM" )
+VAR _mesFim   = FORMAT ( EDATE ( TODAY (), 17 ), "YYYY-MM" )
+VAR _meses =
+    FILTER (
+        SUMMARIZE ( ALL ( dim_calendario ), dim_calendario[ano_mes], dim_calendario[mes_abrev], dim_calendario[ano] ),
+        dim_calendario[ano_mes] >= _mesAtual && dim_calendario[ano_mes] <= _mesFim
+    )
+VAR _t =
+    ADDCOLUMNS (
+        _meses,
+        "_v",
+            VAR _m = dim_calendario[ano_mes]
+            RETURN CALCULATE ( COALESCE ( [Previsto Cronograma], 0 ), REMOVEFILTERS ( dim_calendario ), dim_calendario[ano_mes] = _m )
+    )
+// Escala: se o maior mês passa de 3 vezes o segundo, a barra dele é cortada (listrada, com o valor
+// escrito) e os demais meses ganham altura legível. Sem isso, um mês de pico achata todos os outros.
+VAR _top2   = TOPN ( 2, _t, [_v], DESC )
+VAR _max1   = MAXX ( _top2, [_v] )
+VAR _max2   = MINX ( _top2, [_v] )
+VAR _escala = IF ( _max1 > 3 * _max2 && _max2 > 0, _max2 * 1.15, _max1 )
+VAR _totJanela = SUMX ( _t, [_v] )
+VAR _ini    = DATE ( YEAR ( TODAY () ), MONTH ( TODAY () ), 1 )
+VAR _passou = COALESCE ( CALCULATE ( [Previsto Cronograma], fato_comissoes_programacao[data_previsao] < _ini, REMOVEFILTERS ( dim_calendario ) ), 0 )
+VAR _depois = COALESCE ( CALCULATE ( [Previsto Cronograma], fato_comissoes_programacao[data_previsao] > EOMONTH ( TODAY (), 17 ), REMOVEFILTERS ( dim_calendario ) ), 0 )
+VAR _tPassou = "R$ " & IF ( _passou >= 1000000, FORMAT ( _passou / 1000000, "#,0.0" ) & " mi", FORMAT ( _passou / 1000, "#,0" ) & " mil" )
+VAR _tDepois = "R$ " & IF ( _depois >= 1000000, FORMAT ( _depois / 1000000, "#,0.0" ) & " mi", FORMAT ( _depois / 1000, "#,0" ) & " mil" )
+VAR _tJanela = "R$ " & IF ( _totJanela >= 1000000, FORMAT ( _totJanela / 1000000, "#,0.0" ) & " mi", FORMAT ( _totJanela / 1000, "#,0" ) & " mil" )
+
+VAR _colunas =
+    CONCATENATEX (
+        _t,
+        VAR _v  = [_v]
+        VAR _h  = FORMAT ( MIN ( 100, DIVIDE ( _v, _escala ) * 100 ), "0" )
+        VAR _tv = IF ( _v >= 1000000, FORMAT ( _v / 1000000, "#,0.0" ) & " mi", FORMAT ( _v / 1000, "#,0" ) & " mil" )
+        RETURN
+            "<div class='mes'>"
+                & "<div class='bs'><i" & IF ( _v > _escala, " class='cut'", "" ) & " style='height:" & _h & "%' title='" & _tv & "'></i></div>"
+                & "<div class='nv'>" & _tv & "</div>"
+                & "<div class='mm'>" & dim_calendario[mes_abrev] & "/" & FORMAT ( MOD ( dim_calendario[ano], 100 ), "00" ) & "</div>"
+            & "</div>",
+        "",
+        dim_calendario[ano_mes], ASC
+    )
+
+VAR _css =
+    "<style>" &
+    "html,body{margin:0;padding:0;height:100%;background:#fff;}" &
+    ".s{font-family:'Segoe UI Semibold','Segoe UI',Arial,sans-serif;font-weight:600;color:#1F2937;box-sizing:border-box;padding:24px 30px;height:100%;overflow:hidden;display:flex;flex-direction:column;}" &
+    ".s *{box-sizing:border-box;}" &
+    ".s .top{display:flex;align-items:baseline;gap:28px;flex-wrap:wrap;}" &
+    ".s .ti{font-size:40px;color:#003254;line-height:1.1;}" &
+    ".s .lg{font-size:26px;color:#6B7280;margin-left:auto;}" &
+    ".s .corpo{flex:1;display:flex;gap:18px;align-items:stretch;margin-top:18px;min-height:0;}" &
+    ".s .lado{flex:0 0 250px;border-radius:16px;background:#F3F4F6;padding:18px 20px;display:flex;flex-direction:column;justify-content:center;}" &
+    ".s .lado b{display:block;font-size:40px;color:#4B5563;line-height:1.1;}" &
+    ".s .lado span{font-size:22px;color:#6B7280;line-height:1.3;margin-top:8px;font-weight:400;}" &
+    ".s .gr{flex:1;display:flex;gap:10px;align-items:stretch;min-height:0;}" &
+    ".s .mes{flex:1 1 0;min-width:0;display:flex;flex-direction:column;}" &
+    ".s .bs{flex:1;display:flex;align-items:flex-end;border-bottom:3px solid #E5E7EB;}" &
+    ".s .bs i{display:block;width:100%;min-height:3px;border-radius:6px 6px 0 0;background:#003254;animation:g .8s ease-out both;}" &
+    ".s .bs i.cut{background:repeating-linear-gradient(135deg,#003254 0 12px,#3E6A8A 12px 24px);}" &
+    ".s .nv{font-size:22px;text-align:center;color:#003254;padding-top:8px;line-height:1.1;white-space:nowrap;}" &
+    ".s .mm{font-size:22px;text-align:center;color:#6B7280;padding-top:4px;text-transform:uppercase;}" &
+    ".s .ft{margin-top:12px;font-size:24px;color:#6B7280;line-height:1.35;font-weight:400;}" &
+    "@keyframes g{from{transform:scaleY(0);transform-origin:bottom}}" &
+    "</style>"
+
+RETURN
+    _css &
+    "<div class='s'>" &
+        "<div class='top'><div class='ti'>Cronograma de comissão dos próximos 18 meses</div><div class='lg'>na janela: " & _tJanela & "</div></div>" &
+        "<div class='corpo'>" &
+            "<div class='lado'><b>" & _tPassou & "</b><span>já venceu, antes deste mês (o CVCRM não diz se foi pago)</span></div>" &
+            "<div class='gr'>" & _colunas & "</div>" &
+            "<div class='lado'><b>" & _tDepois & "</b><span>vence depois da janela</span></div>" &
+        "</div>" &
+        "<div class='ft'>Parcelas previstas das reservas vendidas, pela data de previsão do cronograma. É o que está programado, e não o que será pago: o CVCRM não registra pagamento efetivo. Barra listrada: mês de pico, cortado para os outros ficarem legíveis (o valor está escrito embaixo). Sem o filtro de período.</div>" &
+    "</div>"
+
+
+// ---- 4. Estrutura: quem recebe a comissão ----
+// Visual: HTML Content. Campo Values: [Estrutura Comissão HTML]. Em quanto do contrato a comissão
+// se divide, por tipo de beneficiário, nas reservas vendidas (regras ativas). Em 06/nov/2026 o total
+// é de 4,9% do contrato: 4,2% para a imobiliária, 0,6% para o corretor, 0,04% para a equipe interna da
+// Pafil e 0,02% para usuário da imobiliária. O % de cada grupo é sobre o VGV de TODAS as reservas com
+// regra (cada reserva contada uma vez), e não só das que têm regra daquele grupo. Segue o filtro de
+// período (data da venda).
+Estrutura Comissão HTML =
+
+VAR _vgv = [VGV Das Reservas Com Regra]
+VAR _g =
+    ADDCOLUMNS (
+        SUMMARIZE (
+            FILTER ( fato_comissoes_regras, fato_comissoes_regras[eh_ativa] = TRUE () && fato_comissoes_regras[eh_reserva_viva] = TRUE () ),
+            fato_comissoes_regras[beneficiario_grupo]
+        ),
+        "_v", CALCULATE ( [Regra Valor] )
+    )
+VAR _tot = SUMX ( _g, [_v] )
+VAR _pctTot = DIVIDE ( _tot, _vgv )
+VAR _barra =
+    CONCATENATEX (
+        _g,
+        VAR _p = DIVIDE ( [_v], _tot ) * 100
+        VAR _i = RANKX ( _g, [_v], , DESC, DENSE )
+        RETURN "<i class='s" & _i & "' style='width:" & FORMAT ( _p, "0.0" ) & "%' title='" & fato_comissoes_regras[beneficiario_grupo] & "'></i>",
+        "",
+        [_v], DESC
+    )
+VAR _linhas =
+    CONCATENATEX (
+        _g,
+        VAR _pc = DIVIDE ( [_v], _vgv )
+        VAR _i  = RANKX ( _g, [_v], , DESC, DENSE )
+        VAR _tV = "R$ " & IF ( [_v] >= 1000000, FORMAT ( [_v] / 1000000, "#,0.0" ) & " mi", FORMAT ( [_v] / 1000, "#,0" ) & " mil" )
+        RETURN
+            "<div class='r'><div class='lb'><i class='s" & _i & "'></i>" & fato_comissoes_regras[beneficiario_grupo] & "</div>"
+                & "<div class='nu'>" & FORMAT ( _pc, "0.00%" ) & "</div>"
+                & "<div class='nu s'>" & _tV & "</div>"
+                & "<div class='nu s'>" & FORMAT ( DIVIDE ( [_v], _tot ), "0%" ) & "</div></div>",
+        "",
+        [_v], DESC
+    )
+
+VAR _css =
+    "<style>" &
+    "html,body{margin:0;padding:0;height:100%;background:#fff;}" &
+    ".x{font-family:'Segoe UI Semibold','Segoe UI',Arial,sans-serif;font-weight:600;color:#1F2937;box-sizing:border-box;padding:24px 30px;height:100%;overflow:hidden;}" &
+    ".x *{box-sizing:border-box;}" &
+    ".x .ti{font-size:40px;color:#003254;line-height:1.1;}" &
+    ".x .su{font-size:26px;color:#6B7280;margin:4px 0 14px;}" &
+    ".x .big{font-size:84px;color:#003254;line-height:1;margin:6px 0 16px;}" &
+    ".x .big span{font-size:28px;color:#6B7280;margin-left:14px;font-weight:400;}" &
+    ".x .seg{display:flex;height:44px;border-radius:22px;overflow:hidden;background:#E5E7EB;}" &
+    ".x .seg i{display:block;height:100%;}" &
+    ".x i.s1{background:#003254;}.x i.s2{background:#0a4a73;}.x i.s3{background:#6B8FA8;}.x i.s4{background:#B7C9D6;}.x i.s5{background:#9CA3AF;}" &
+    ".x .hd,.x .r{display:grid;grid-template-columns:minmax(380px,2fr) 170px 190px 120px;align-items:center;gap:16px;}" &
+    ".x .hd{margin-top:22px;font-size:22px;letter-spacing:.04em;color:#6B7280;padding:0 0 8px;border-bottom:2px solid #E5E7EB;}" &
+    ".x .hd span:nth-child(n+2){text-align:right;}" &
+    ".x .r{font-size:32px;padding:11px 0;border-bottom:1px solid #E5E7EB;}" &
+    ".x .lb{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}" &
+    ".x .lb i{display:inline-block;width:22px;height:22px;border-radius:6px;margin-right:14px;vertical-align:-2px;}" &
+    ".x .nu{text-align:right;white-space:nowrap;}" &
+    ".x .nu.s{color:#6B7280;font-weight:400;}" &
+    ".x .ft{margin-top:14px;font-size:24px;color:#6B7280;line-height:1.35;font-weight:400;}" &
+    "</style>"
+
+RETURN
+    _css &
+    "<div class='x'>" &
+        "<div class='ti'>Quem recebe a comissão</div>" &
+        "<div class='su'>regras ativas das reservas vendidas, em % do contrato</div>" &
+        "<div class='big'>" & IF ( ISBLANK ( _pctTot ), "--", FORMAT ( _pctTot, "0.0%" ) ) & "<span>do contrato, no total</span></div>" &
+        "<div class='seg'>" & _barra & "</div>" &
+        "<div class='hd'><span>BENEFICIÁRIO</span><span>% DO CONTRATO</span><span>VALOR</span><span>PARTE</span></div>" &
+        _linhas &
+        "<div class='ft'>Imobiliária inclui a da reserva, a de coordenação e a configurada na regra. Equipe interna são usuários administrativos da Pafil e coordenadores de produto. Só comissão (não há prêmio nas regras ativas hoje).</div>" &
+    "</div>"
+
+
+// =============================================================================
+// ---- 5. Tabelas com clique: por imobiliária e por empreendimento ----
+// Visual: HTML Content com Granularity: uma linha por imobiliária (ou por empreendimento), e o
+// clique na linha filtra o resto da página (Ctrl+clique acumula). Mesmo mecanismo das tabelas de
+// Atendimento do CVCRM, da URA e de Repasses. O CSS é autocontido (ver a nota em MEDIDAS_REPASSES.dax);
+// a legenda do rodapé leva width:0 e min-width:100% para a frase longa não alargar as colunas.
+//
+// Configuração do visual (a do empreendimento troca só os campos):
+//   Values          -> [Linha Imobiliária Comissão HTML]
+//   Granularity     -> dim_imobiliaria[imobiliaria]
+//   Tooltips        -> [Comissão por Linha (ordenação)]
+//   Classificar por -> Comissão por Linha (ordenação), decrescente
+//   Formatar -> Stylesheet -> fx -> [CSS Tabela Comissões (linhas)]
+//   Formatar -> Cross-filtering -> Ativar; Transparency 0
+//   Formatar -> No data message -> "Nenhuma comissão no período selecionado."
+//   Filtro do visual -> [Comissão Devida] diferente de vazio (esconde quem não tem comissão devida)
+// =============================================================================
+
+CSS Tabela Comissões (linhas) =
+    "#htmlContent{display:grid;grid-template-columns:minmax(300px,520px) repeat(7,minmax(max-content,auto));align-content:start;font-family:'Segoe UI','Segoe UI Semibold',Arial,sans-serif;font-size:34px;color:#1F2937;}" &
+    ".htmlViewerEntry,.htmlViewerEntry>div,.hdr{display:contents;}" &
+    ".htmlViewerEntry:not(:first-child) .hdr{display:none;}" &
+    ".th{position:sticky;top:0;z-index:1;background:#003254;color:#fff;font-weight:600;font-size:24px;letter-spacing:.02em;text-align:center;padding:18px 12px;white-space:normal;line-height:1.15;overflow:hidden;}" &
+    ".th:first-child{border-radius:12px 0 0 0;text-align:left;}" &
+    ".th:last-child{border-radius:0 12px 0 0;}" &
+    ".td{padding:12px 12px;text-align:center;border-bottom:1px solid #E5E7EB;white-space:nowrap;overflow:hidden;cursor:pointer;background-color:#fff;}" &
+    ".td.nome{text-align:left;font-weight:600;white-space:normal;}" &
+    ".htmlViewerEntry:nth-child(even) .td{background-color:#F3F6F8;}" &
+    ".htmlViewerEntry:hover .td{background-color:#E8EEF2;}" &
+    ".htmlViewerEntry.unselected .td{opacity:.35;}" &
+    ".sit{display:inline-block;padding:4px 16px;border-radius:999px;font-size:30px;font-weight:600;color:#fff;}" &
+    ".sit-cancelado{background:#8A1C1C;}" &
+    ".sit-finalizado{background:#1B6B3A;}" &
+    ".sit-outra{background:#6B7280;}" &
+    ".sub{font-size:22px;font-weight:600;color:#6B7280;margin-left:12px;}" &
+    ".semid{color:#6B7280;font-style:italic;}" &
+    ".cap{display:none;grid-column:1/-1;width:0;min-width:100%;font-size:26px;color:#6B7280;padding:14px 24px 0 24px;text-align:center;font-weight:400;}" &
+    ".htmlViewerEntry:last-child .cap{display:block;}"
+
+// Medida âncora só para o campo Tooltips (para virar opção em "Classificar por").
+Comissão por Linha (ordenação) =
+[Comissão Devida]
+
+Cabeçalho Comissões HTML =
+"<div class='th'>COMISSÕES</div><div class='th'>VGV</div><div class='th'>COMISSÃO</div>"
+    & "<div class='th'>% EFETIVO</div><div class='th'>FINALIZADA</div>"
+    & "<div class='th'>EM ABERTO</div><div class='th'>CANCELADA</div></div>"
+
+// As células depois do total, iguais nas duas tabelas. % efetivo: verde se está na média do recorte ou
+// abaixo, cinza até 0,5 ponto percentual acima e vermelho acima disso (a média é a do conjunto de linhas
+// que o filtro deixa na tabela; os cortes estão em _classe). Em aberto é a foto de hoje. Cancelada é a
+// parte do valor gerado que foi cancelada.
+Células Comissões HTML =
+VAR _vgv   = COALESCE ( [VGV Das Comissões Devidas], 0 )
+VAR _dev   = COALESCE ( [Comissão Devida], 0 )
+VAR _pct   = [% Comissão Efetiva]
+VAR _fin   = COALESCE ( [Comissão Finalizada], 0 )
+VAR _abr   = COALESCE ( [Comissão Em Aberto Hoje], 0 )
+VAR _pCan  = [% Cancelado Do Gerado]
+VAR _media = CALCULATE ( [% Comissão Efetiva], ALLSELECTED ( dim_imobiliaria ), ALLSELECTED ( dim_empreendimento ) )
+VAR _classe = IF ( ISBLANK ( _pct ) || ISBLANK ( _media ), "sit-outra", IF ( _pct <= _media, "sit-finalizado", IF ( _pct <= _media + 0.005, "sit-outra", "sit-cancelado" ) ) )
+VAR _tPct  = IF ( ISBLANK ( _pct ), "--", FORMAT ( _pct, "0.0%" ) )
+VAR _tPCan = IF ( ISBLANK ( _pCan ), "--", FORMAT ( _pCan, "0%" ) )
+VAR _tVgv  = "R$ " & IF ( _vgv >= 1000000, FORMAT ( _vgv / 1000000, "#,0.0" ) & " mi", FORMAT ( _vgv / 1000, "#,0" ) & " mil" )
+VAR _tDev  = "R$ " & IF ( _dev >= 1000000, FORMAT ( _dev / 1000000, "#,0.00" ) & " mi", FORMAT ( _dev / 1000, "#,0" ) & " mil" )
+VAR _tFin  = IF ( _fin = 0, "--", "R$ " & IF ( _fin >= 1000000, FORMAT ( _fin / 1000000, "#,0.00" ) & " mi", FORMAT ( _fin / 1000, "#,0" ) & " mil" ) )
+VAR _tAbr  = IF ( _abr = 0, "--", "R$ " & IF ( _abr >= 1000000, FORMAT ( _abr / 1000000, "#,0.00" ) & " mi", FORMAT ( _abr / 1000, "#,0" ) & " mil" ) )
+RETURN
+    "<div class='td'>" & _tVgv & "</div>"
+        & "<div class='td'>" & _tDev & "</div>"
+        & "<div class='td'><span class='sit " & _classe & "'>" & _tPct & "</span></div>"
+        & "<div class='td'>" & _tFin & "</div>"
+        & "<div class='td'>" & _tAbr & "</div>"
+        & "<div class='td'>" & _tPCan & "</div>"
+
+Linha Imobiliária Comissão HTML =
+VAR _imob   = SELECTEDVALUE ( dim_imobiliaria[imobiliaria] )
+VAR _tipo   = SELECTEDVALUE ( dim_imobiliaria[house_parcerias] )
+VAR _qtd    = COALESCE ( [Qtd Comissões Devidas], 0 )
+VAR _max    = MAXX ( ALLSELECTED ( dim_imobiliaria[imobiliaria] ), [Qtd Comissões Devidas] )
+VAR _barra  = FORMAT ( MIN ( 100, DIVIDE ( _qtd, _max ) * 100 ), "0" )
+VAR _rotulo = SUBSTITUTE ( SUBSTITUTE ( SUBSTITUTE ( COALESCE ( _imob, "" ), "&", "&amp;" ), "<", "&lt;" ), ">", "&gt;" )
+VAR _tag    = IF ( NOT ISBLANK ( _tipo ), " <span class='sub'>" & _tipo & "</span>", "" )
+VAR _hdr    = "<div class='hdr'><div class='th'>IMOBILIÁRIA</div>" & [Cabeçalho Comissões HTML]
+RETURN
+    IF (
+        NOT ISBLANK ( _imob ) && _qtd > 0,
+        _hdr
+            & "<div class='td nome'>" & _rotulo & _tag & "</div>"
+            & "<div class='td' style='background-image:linear-gradient(to right,rgba(0,50,84,.14) " & _barra & "%,transparent " & _barra & "%)'>" & FORMAT ( _qtd, "#,0" ) & "</div>"
+            & [Células Comissões HTML]
+            & "<div class='cap'>Só comissões devidas (não canceladas e com valor). % efetivo: comissão dividida pelo VGV das vendas; verde na média do recorte ou abaixo, cinza até 0,5 ponto acima, vermelho acima disso. Finalizada não é paga. Em aberto: foto de hoje. Cancelada: parte do valor gerado.</div>",
+        _hdr
+    )
+
+// Mesma tabela por empreendimento. Config: Granularity -> dim_empreendimento[empreendimento_conformado].
+Linha Empreendimento Comissão HTML =
+VAR _emp    = SELECTEDVALUE ( dim_empreendimento[empreendimento_conformado] )
+VAR _qtd    = COALESCE ( [Qtd Comissões Devidas], 0 )
+VAR _max    = MAXX ( ALLSELECTED ( dim_empreendimento[empreendimento_conformado] ), [Qtd Comissões Devidas] )
+VAR _barra  = FORMAT ( MIN ( 100, DIVIDE ( _qtd, _max ) * 100 ), "0" )
+VAR _rotulo = SUBSTITUTE ( SUBSTITUTE ( SUBSTITUTE ( COALESCE ( _emp, "" ), "&", "&amp;" ), "<", "&lt;" ), ">", "&gt;" )
+VAR _hdr    = "<div class='hdr'><div class='th'>EMPREENDIMENTO</div>" & [Cabeçalho Comissões HTML]
+RETURN
+    IF (
+        NOT ISBLANK ( _emp ) && _qtd > 0,
+        _hdr
+            & "<div class='td nome'>" & _rotulo & "</div>"
+            & "<div class='td' style='background-image:linear-gradient(to right,rgba(0,50,84,.14) " & _barra & "%,transparent " & _barra & "%)'>" & FORMAT ( _qtd, "#,0" ) & "</div>"
+            & [Células Comissões HTML]
+            & "<div class='cap'>Só comissões devidas (não canceladas e com valor). A comissão varia com a regra de cada empreendimento e com a imobiliária que vendeu: compare o % efetivo com a média do recorte.</div>",
+        _hdr
+    )
+
+
+// ---- 6. Nota fiscal pendente, uma comissão por linha ----
+// Visual: HTML Content com Granularity = fato_comissoes[id_comissao]. É a lista de cobrança do
+// backoffice: comissões esperando a nota fiscal, da mais antiga para a mais nova. Filtros do visual:
+// fato_comissoes[eh_em_aberto] = verdadeiro e fato_comissoes[grupo_situacao] em "2. Aguardando NF" e
+// "3. Desligamento, NF pendente". O clique filtra a página. Mostra o corretor e a imobiliária (quem
+// precisa emitir a nota), e não o cliente.
+//
+// Configuração do visual:
+//   Values          -> [Linha NF Pendente HTML]
+//   Granularity     -> fato_comissoes[id_comissao]
+//   Tooltips        -> [Dias Na Situação (ordenação)]
+//   Classificar por -> Dias Na Situação (ordenação), decrescente
+//   Formatar -> Stylesheet -> fx -> [CSS Tabela NF Pendente (linhas)]
+//   Formatar -> Cross-filtering -> Ativar; Transparency 0
+//   Formatar -> No data message -> "Nenhuma comissão esperando nota fiscal."
+CSS Tabela NF Pendente (linhas) =
+[CSS Tabela Comissões (linhas)]
+    & "#htmlContent{grid-template-columns:repeat(7,minmax(max-content,auto));font-size:28px;}"
+    & ".td{text-align:left;}"
+    & ".td.c{text-align:center;}"
+
+Dias Na Situação (ordenação) =
+MAX ( fato_comissoes[dias_na_situacao] )
+
+Linha NF Pendente HTML =
+VAR _id    = SELECTEDVALUE ( fato_comissoes[id_comissao] )
+VAR _res   = SELECTEDVALUE ( fato_comissoes[id_reserva] )
+VAR _imob  = SUBSTITUTE ( SUBSTITUTE ( COALESCE ( SELECTEDVALUE ( fato_comissoes[imobiliaria] ), "" ), "&", "&amp;" ), "<", "&lt;" )
+VAR _corr  = SUBSTITUTE ( SUBSTITUTE ( COALESCE ( SELECTEDVALUE ( fato_comissoes[corretor] ), "" ), "&", "&amp;" ), "<", "&lt;" )
+VAR _emp   = SUBSTITUTE ( SUBSTITUTE ( COALESCE ( SELECTEDVALUE ( fato_comissoes[empreendimento_conformado] ), "" ), "&", "&amp;" ), "<", "&lt;" )
+VAR _sit   = SUBSTITUTE ( SUBSTITUTE ( COALESCE ( SELECTEDVALUE ( fato_comissoes[situacao] ), "" ), "&", "&amp;" ), "<", "&lt;" )
+VAR _val   = SELECTEDVALUE ( fato_comissoes[valor_devido] )
+VAR _tVal  = IF ( ISBLANK ( _val ), "--", "R$ " & FORMAT ( _val, "#,0" ) )
+VAR _dias  = SELECTEDVALUE ( fato_comissoes[dias_na_situacao] )
+// Há quanto tempo espera: até 90 dias é cinza, até um ano é cinza escuro e mais de um ano é vermelho.
+VAR _classe = IF ( _dias <= 90, "sit-finalizado", IF ( _dias <= 365, "sit-outra", "sit-cancelado" ) )
+VAR _tDias = IF ( ISBLANK ( _dias ), "--", FORMAT ( _dias, "#,0" ) & " d" )
+VAR _hdr   =
+    "<div class='hdr'><div class='th'>RESERVA</div><div class='th'>IMOBILIÁRIA</div><div class='th'>CORRETOR</div>"
+        & "<div class='th'>EMPREENDIMENTO</div><div class='th'>SITUAÇÃO</div><div class='th'>VALOR</div>"
+        & "<div class='th'>ESPERANDO HÁ</div></div>"
+RETURN
+    IF (
+        NOT ISBLANK ( _id ),
+        _hdr
+            & "<div class='td c'>" & _res & "</div>"
+            & "<div class='td'>" & _imob & "</div>"
+            & "<div class='td'>" & _corr & "</div>"
+            & "<div class='td'>" & _emp & "</div>"
+            & "<div class='td'>" & _sit & "</div>"
+            & "<div class='td c'>" & _tVal & "</div>"
+            & "<div class='td c'><span class='sit " & _classe & "'>" & _tDias & "</span></div>",
+        _hdr
+    )
+
+
+// ---- 7. Critérios: o glossário da página ----
+// Visual: HTML Content (painel que abre por botão, como o da Telefonia). Campo Values:
+// [Critérios Comissões HTML]. Os números mudam com os filtros. Tudo em "em" a partir de
+// font-size:16px em .g: para o painel ficar maior ou menor, mude só esse número e o tamanho do visual.
+Critérios Comissões HTML =
+
+VAR _dev    = COALESCE ( [Comissão Devida], 0 )
+VAR _pct    = [% Comissão Efetiva]
+VAR _pCan   = [% Cancelado Do Gerado]
+VAR _nf     = COALESCE ( [Qtd Comissões Com NF Pendente], 0 )
+VAR _dNf    = [Dias Mediana NF Pendente]
+VAR _viva   = COALESCE ( [Qtd Comissões Vivas Em Reserva Sem Venda], 0 )
+VAR _cascas = COALESCE ( [Comissões Sem Valor Apurado], 0 )
+VAR _tPct   = IF ( ISBLANK ( _pct ), "--", FORMAT ( _pct, "0.0%" ) )
+VAR _tPCan  = IF ( ISBLANK ( _pCan ), "--", FORMAT ( _pCan, "0%" ) )
+VAR _tDnf   = IF ( ISBLANK ( _dNf ), "--", FORMAT ( _dNf, "#,0" ) & " dias" )
+
+VAR _css =
+    "<style>" &
+    "html,body{margin:0;padding:0;height:100%;background:#fff;}" &
+    ".g{font-family:'Segoe UI',Arial,sans-serif;font-size:16px;color:#1F2937;box-sizing:border-box;padding:1.2em 1.4em;height:100%;overflow:auto;}" &
+    ".g *{box-sizing:border-box;}" &
+    ".g h1{margin:0;font-size:1.6em;color:#003254;line-height:1.15;}" &
+    ".g .sub{margin:.25em 0 1.1em;font-size:.9em;color:#6B7280;}" &
+    ".g .grid{display:grid;grid-template-columns:repeat(3,1fr);gap:1em;}" &
+    ".g .it{background:#F3F6F8;border-radius:.8em;border-left:.35em solid #003254;padding:.9em 1.05em;}" &
+    ".g .it.c{border-left-color:#6B7280;}" &
+    ".g .it.r{border-left-color:#8A1C1C;}" &
+    ".g .w2{grid-column:span 2;}" &
+    ".g .w3{grid-column:span 3;}" &
+    ".g .tt{display:flex;justify-content:space-between;align-items:baseline;gap:.8em;}" &
+    ".g .tt b{font-size:1.05em;color:#003254;}" &
+    ".g .tt .v{font-size:1.15em;font-weight:700;color:#003254;white-space:nowrap;}" &
+    ".g .it.c .tt b,.g .it.c .tt .v{color:#4B5563;}" &
+    ".g .it.r .tt b,.g .it.r .tt .v{color:#8A1C1C;}" &
+    ".g p{margin:.55em 0 0;font-size:.88em;line-height:1.45;color:#374151;}" &
+    ".g .ft{margin-top:1.1em;font-size:.8em;color:#6B7280;}" &
+    "</style>"
+
+RETURN
+    _css &
+    "<div class='g'>" &
+        "<h1>Como ler esta página</h1>" &
+        "<div class='sub'>Os números mudam com o período e os filtros escolhidos. Os cartões cinza são a foto de hoje.</div>" &
+        "<div class='grid'>" &
+
+            "<div class='it w3'><div class='tt'><b>O que é a comissão no CVCRM</b><span class='v'>regra, comissão, pagamento</span></div>" &
+                "<p>A reserva tem regras de comissão (quem recebe, quanto, de que tipo). Na venda o CVCRM gera a comissão, o total devido, que percorre um workflow de sete situações e se desdobra em pagamentos (parcelas com vencimento). O cronograma previsto é a programação de cada regra, desde a venda. Quando a regra muda, o CVCRM cancela a comissão e gera outra, então uma reserva pode ter várias, e só a não cancelada vale.</p></div>" &
+
+            "<div class='it'><div class='tt'><b>Comissão devida</b><span class='v'>" & FORMAT ( _dev / 1000000, "#,0.0" ) & " mi</span></div>" &
+                "<p>Soma das comissões não canceladas e com valor, das vendas do período. É o que se deve pagar, e não o que foi pago: o CVCRM não registra o pagamento efetivo.</p></div>" &
+
+            "<div class='it'><div class='tt'><b>% efetivo</b><span class='v'>" & _tPct & "</span></div>" &
+                "<p>Comissão devida dividida pelo VGV das vendas que a geraram. Cada reserva tem uma comissão devida só, então o VGV não dobra. Compare a House com Parcerias na tabela por imobiliária.</p></div>" &
+
+            "<div class='it c'><div class='tt'><b>Cancelada</b><span class='v'>" & _tPCan & " do gerado</span></div>" &
+                "<p>Distrato (quase todos) e comissão refeita depois de mudar a regra. O valor cancelado fica de fora da devida e aparece à parte.</p></div>" &
+
+            "<div class='it r'><div class='tt'><b>NF pendente</b><span class='v'>" & FORMAT ( _nf, "#,0" ) & " comissões</span></div>" &
+                "<p>Comissões esperando a nota fiscal, inclusive de corretor desligado. A mediana de espera é de " & _tDnf & ": é carteira antiga, e não fila do mês. Vale a cobrança ou a baixa contábil.</p></div>" &
+
+            "<div class='it r'><div class='tt'><b>Vivas sem venda</b><span class='v'>" & FORMAT ( _viva, "#,0" ) & " comissões</span></div>" &
+                "<p>Comissão que não está cancelada, mas é de reserva que virou distrato, foi cancelada ou venceu. O CVCRM cancela quase todas sozinho; as que sobram precisam de limpeza.</p></div>" &
+
+            "<div class='it c'><div class='tt'><b>Sem valor apurado</b><span class='v'>" & FORMAT ( _cascas, "#,0" ) & " comissões</span></div>" &
+                "<p>Cascas criadas na venda, com valor zero e sem regra calculada (quase todas de 2023 e 2024). Ficam de fora das contagens e do % efetivo.</p></div>" &
+
+            "<div class='it w3'><div class='tt'><b>Finalizada não é paga</b><span class='v'>cronograma, não caixa</span></div>" &
+                "<p>A comissão finaliza quando o processo dela fecha, e os pagamentos seguem o cronograma, com vencimentos até 2028. Nenhum pagamento está na situação PAGO no CVCRM, então a data de pagamento efetivo não existe nos dados. O fluxo de desembolso mostra o que está programado, e a parte que já venceu não prova que foi paga. Para saber o que saiu do caixa, o dado é o do financeiro (MEGA).</p></div>" &
+
+            "<div class='it w3'><div class='tt'><b>Origem dos dados</b><span class='v'>CVCRM, de hora em hora</span></div>" &
+                "<p>Módulo de comissões do CVCRM (API CVDW), carregado de hora em hora. Uma leitura completa por dia remove o que o CVCRM apagou (em 06/nov/2026 eram 209 pagamentos de comissões canceladas ou refeitas, R$ 582 mil), para a soma bater com o sistema. O cronograma cobre as reservas vendidas e é a base da previsão de caixa; os pagamentos cobrem só as comissões já apuradas.</p></div>" &
+
+        "</div>" &
+        "<div class='ft'>Conferência, sem filtro de período: Comissão devida = Finalizada + Em aberto.</div>" &
+    "</div>"

@@ -96,6 +96,8 @@ No dia a dia, só o incremental importa: `python ingestao.py --incremental`.
 | Decisões já fechadas, segurança e LGPD | [`docs/decisoes.md`](docs/decisoes.md) |
 | Consultar o banco (psql, DBeaver, pgAdmin) | [`docs/consultar-o-banco.md`](docs/consultar-o-banco.md) |
 | Atualizar os de-paras | [`docs/de-paras.md`](docs/de-paras.md) |
+| Comissão e Repasse: API, pipeline, números e armadilhas | [`docs/comissoes-e-repasses.md`](docs/comissoes-e-repasses.md) |
+| Inventário de todos os endpoints do CVDW, com contagem ao vivo | [`docs/cvcrm-api-inventario.md`](docs/cvcrm-api-inventario.md) |
 | Regras de negócio herdadas dos relatórios antigos | [`docs/regras-de-negocio.md`](docs/regras-de-negocio.md) |
 | Desenho do modelo para o Power BI | [`docs/modelo-semantico.md`](docs/modelo-semantico.md) |
 | Operar a máquina de produção | [`infra/README.md`](infra/README.md) |

@@ -57,6 +57,23 @@ def garantir_schema_e_controle(conn: psycopg.Connection, schema: str) -> None:
                 """
             ).format(sch=sql.Identifier(schema), tab=sql.Identifier(TABELA_CONTROLE))
         )
+        # Coluna acrescentada depois da criação da tabela (objetos com `espelho: true`).
+        # Só roda o ALTER quando ela ainda não existe, para uma carga normal não exigir
+        # permissão de dono da tabela.
+        cur.execute(
+            """
+            SELECT 1 FROM information_schema.columns
+            WHERE table_schema = %s AND table_name = %s
+              AND column_name = 'ultima_leitura_completa'
+            """,
+            (schema, TABELA_CONTROLE),
+        )
+        if cur.fetchone() is None:
+            cur.execute(
+                sql.SQL(
+                    "ALTER TABLE {sch}.{tab} ADD COLUMN ultima_leitura_completa timestamptz"
+                ).format(sch=sql.Identifier(schema), tab=sql.Identifier(TABELA_CONTROLE))
+            )
     conn.commit()
 
 
@@ -223,6 +240,61 @@ def ler_data_referencia(
         return linha[0] if linha else None
 
 
+def ler_leitura_completa(
+    conn: psycopg.Connection, schema: str, nome_logico: str
+) -> datetime | None:
+    """Início da última leitura COMPLETA do objeto (a que alimenta o `espelho`)."""
+    with conn.cursor() as cur:
+        cur.execute(
+            sql.SQL(
+                "SELECT ultima_leitura_completa FROM {sch}.{tab} WHERE nome_logico = %s"
+            ).format(sch=sql.Identifier(schema), tab=sql.Identifier(TABELA_CONTROLE)),
+            (nome_logico,),
+        )
+        linha = cur.fetchone()
+        return linha[0] if linha else None
+
+
+def contar_nao_vistos(
+    conn: psycopg.Connection, schema: str, tabela: str, antes_de: datetime
+) -> tuple[int, int]:
+    """(linhas cuja última extração é anterior a `antes_de`, total de linhas)."""
+    with conn.cursor() as cur:
+        cur.execute(
+            sql.SQL(
+                "SELECT count(*) FILTER (WHERE {extr} < %s), count(*) FROM {sch}.{tab}"
+            ).format(
+                extr=sql.Identifier(COL_EXTRACAO),
+                sch=sql.Identifier(schema),
+                tab=sql.Identifier(tabela),
+            ),
+            (antes_de,),
+        )
+        antigas, total = cur.fetchone()
+        return int(antigas), int(total)
+
+
+def apagar_nao_vistos(
+    conn: psycopg.Connection, schema: str, tabela: str, antes_de: datetime
+) -> int:
+    """Apaga da bronze as linhas que a origem deixou de devolver (espelho).
+
+    Toda linha lida numa carga leva `_data_extracao` igual ao início da leitura, então o que
+    ficou com extração anterior a `antes_de` não apareceu em nenhuma leitura desde então.
+    Os snapshots diários não são tocados: guardam o histórico do que já existiu.
+    """
+    with conn.cursor() as cur:
+        cur.execute(
+            sql.SQL("DELETE FROM {sch}.{tab} WHERE {extr} < %s").format(
+                sch=sql.Identifier(schema),
+                tab=sql.Identifier(tabela),
+                extr=sql.Identifier(COL_EXTRACAO),
+            ),
+            (antes_de,),
+        )
+        return cur.rowcount
+
+
 def registrar_controle(
     conn: psycopg.Connection,
     schema: str,
@@ -232,26 +304,36 @@ def registrar_controle(
     registros: int,
     status: str,
     mensagem: str | None,
+    leitura_completa: datetime | None = None,
 ) -> None:
-    """Registra (upsert) o resultado da ingestão do objeto na tabela de controle."""
+    """Registra (upsert) o resultado da ingestão do objeto na tabela de controle.
+
+    `leitura_completa`, quando informada, grava o início de uma leitura completa do objeto;
+    sem ela o valor que já estava gravado é mantido.
+    """
     with conn.cursor() as cur:
         cur.execute(
             sql.SQL(
                 """
                 INSERT INTO {sch}.{tab}
                     (nome_logico, ultima_data_referencia, ultima_execucao,
-                     ultimo_modo, registros_ultima_carga, status, mensagem)
-                VALUES (%s, %s, now(), %s, %s, %s, %s)
+                     ultimo_modo, registros_ultima_carga, status, mensagem,
+                     ultima_leitura_completa)
+                VALUES (%s, %s, now(), %s, %s, %s, %s, %s)
                 ON CONFLICT (nome_logico) DO UPDATE SET
-                    ultima_data_referencia = EXCLUDED.ultima_data_referencia,
-                    ultima_execucao        = EXCLUDED.ultima_execucao,
-                    ultimo_modo            = EXCLUDED.ultimo_modo,
-                    registros_ultima_carga = EXCLUDED.registros_ultima_carga,
-                    status                 = EXCLUDED.status,
-                    mensagem               = EXCLUDED.mensagem
+                    ultima_data_referencia  = EXCLUDED.ultima_data_referencia,
+                    ultima_execucao         = EXCLUDED.ultima_execucao,
+                    ultimo_modo             = EXCLUDED.ultimo_modo,
+                    registros_ultima_carga  = EXCLUDED.registros_ultima_carga,
+                    status                  = EXCLUDED.status,
+                    mensagem                = EXCLUDED.mensagem,
+                    ultima_leitura_completa = COALESCE(
+                        EXCLUDED.ultima_leitura_completa,
+                        {tab}.ultima_leitura_completa)
                 """
             ).format(sch=sql.Identifier(schema), tab=sql.Identifier(TABELA_CONTROLE)),
-            (nome_logico, data_referencia, modo, registros, status, mensagem),
+            (nome_logico, data_referencia, modo, registros, status, mensagem,
+             leitura_completa),
         )
 
 
